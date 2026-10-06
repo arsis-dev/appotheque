@@ -13,10 +13,7 @@
   macOS 26 or later · Swift, no dependencies · MIT license
 </p>
 
-<p align="center">
-  <a href="docs/media/appotheque-film.mp4"><img src="docs/images/film-poster.jpg" width="720" alt="Poster of the Appothèque film: the icon, the name and the tagline"></a><br>
-  <a href="docs/media/appotheque-film.mp4">Watch the 35-second film</a>
-</p>
+https://github.com/user-attachments/assets/0a85cfb2-ec63-4f6c-944d-991179194b4a
 
 <p align="center">
   <img src="docs/images/launcher.png" width="380" alt="The launcher: favorites and apps with their state, and the selected app with its Launch button">
