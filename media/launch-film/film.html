@@ -1,0 +1,819 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Appothèque — launch film</title>
+<style>
+  @font-face { font-family: NY; src: url(file:///System/Library/Fonts/NewYork.ttf); font-weight: 100 900; }
+  @font-face { font-family: SF; src: url(file:///System/Library/Fonts/SFNS.ttf); font-weight: 100 900; }
+  @font-face { font-family: SFR; src: url(file:///System/Library/Fonts/SFNSRounded.ttf); font-weight: 100 900; }
+  @font-face { font-family: AvenirNext; src: local("Avenir Next Demi Bold"), local("AvenirNext-DemiBold"); font-weight: 600; }
+  @font-face { font-family: HelveticaNeue; src: local("Helvetica Neue Medium"), local("HelveticaNeue-Medium"); font-weight: 500; }
+  @font-face { font-family: Geist; src: url(assets/fonts/Geist-Regular.woff2); font-weight: 400; }
+  @font-face { font-family: Geist; src: url(assets/fonts/Geist-Bold.woff2); font-weight: 700; }
+  @font-face { font-family: SFM; src: url(file:///System/Library/Fonts/SFNSMono.ttf); font-weight: 100 900; }
+  html, body { margin: 0; background: #0E1013; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script>
+// The whole film is seek(t): every frame is a pure function of time, so any frame renders identically and alone.
+const W = 1920, H = 1080;
+const ctx = document.getElementById('c').getContext('2d');
+
+// ---------- math ----------
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const p = (t, a, b) => clamp((t - a) / (b - a));
+const eOut = t => 1 - Math.pow(1 - t, 3);
+const eInOut = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const eIn = t => t * t * t;
+const spring = (t, k = 11, z = .5) => t <= 0 ? 0 : 1 - Math.exp(-z * k * t) * Math.cos(k * Math.sqrt(1 - z * z) * t);
+const rnd = i => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+// Visible from a to b with eased in/out ramps.
+const span = (t, a, b, inD = .35, outD = .3) => Math.min(eOut(p(t, a, a + inD)), 1 - eIn(p(t, b - outD, b)));
+
+// ---------- palette (from the app icon and the app) ----------
+const COL = {
+  bg0: '#171A1F', bg1: '#0C0E11', line: 'rgba(255,255,255,.055)',
+  cellOn: '#58616C', cellOff: 'rgba(255,255,255,.07)', g1: '#5BE59A', g2: '#22B868',
+  orange: '#F2A33A', text: '#F2F4F6', dim: '#98A1AB', glass: 'rgba(255,255,255,.065)', glassEdge: 'rgba(255,255,255,.13)',
+};
+// Light themes: same roles, dark ink. Chosen with ?theme=… (dark by default).
+const LIGHT = {
+  text: '#1E2125', dim: '#666C74', line: 'rgba(30,35,40,.075)', cellOff: 'rgba(30,35,40,.075)', cellShadow: 'rgba(30,40,35,.18)',
+  orange: '#D47A1E', card: 'rgba(255,255,255,.84)', cardEdge: 'rgba(0,0,0,.07)', cardSheen: 'rgba(255,255,255,.6)', cardShadow: 'rgba(40,45,35,.16)',
+  chipFill: 'rgba(255,255,255,.8)', chipEdge: 'rgba(0,0,0,.08)', chipText: '#3A4048', accentText: '#1E8F55', accentFill: 'rgba(34,184,104,.14)',
+  track: 'rgba(0,0,0,.08)', overlay: [236, 234, 228, .55], hammerHead: '#2A3038', hammerHandle: '#8A929B', tagline: '#4A5058', mutedDot: '#9AA0A7',
+  glow: 'rgba(40,190,110,', windowShadow: 'rgba(40,45,35,.28)',
+};
+const THEMES = {
+  dark: { bg: ['radial', '#171A1F', '#0C0E11'] },
+  ivory: { ...LIGHT, bg: ['radial', '#FCFBF7', '#ECE9E0'] },
+  gradient: { ...LIGHT, bg: ['linear', '#A9C4B6', '#D3DFE7', '#EEE1CE'] },
+  mist: { ...LIGHT, bg: ['radial', '#F3F6F4', '#D9E2DD'] },
+  // arsis.dev "minimal": white, ink, 1 px rules, 2 px corners, no shadow, Geist; green only for the fingerprint's centre cell.
+  arsis: { ...LIGHT, bg: ['flat', '#FFFFFF'], text: '#0A0A0A', dim: '#737373', line: 'rgba(10,10,10,.07)', cellOn: '#0A0A0A', cellOff: '#F0F0F0',
+    cellShadow: 'transparent', card: '#FFFFFF', cardEdge: '#E5E5E5', cardSheen: 'rgba(255,255,255,0)', cardShadow: 'transparent',
+    chipFill: '#FFFFFF', chipEdge: '#E5E5E5', chipText: '#0A0A0A', accentText: '#0A0A0A', accentFill: '#F2F2F2', btnFill: '#0A0A0A', btnText: '#FFFFFF',
+    track: '#E5E5E5', overlay: [255, 255, 255, .78], cardEdge: '#DDDDDD', hammerHead: '#0A0A0A', hammerHandle: '#737373', tagline: '#737373', mutedDot: '#A3A3A3',
+    windowShadow: 'transparent', round: .1, glowK: 0, body: 'Geist', flat: true },
+};
+const THEME_NAME = new URLSearchParams(location.search).get('theme') ?? 'ivory';
+// Structure defaults: corner roundness, glow strength, body font, buttons.
+const BASE = { round: 1, glowK: 1, body: 'SF', flat: false };
+const DARK = {
+  cellShadow: 'rgba(0,0,0,.35)', card: 'rgba(32,36,42,.92)', cardEdge: 'rgba(255,255,255,.13)', cardSheen: 'rgba(255,255,255,.07)', cardShadow: 'rgba(0,0,0,.45)',
+  chipFill: 'rgba(255,255,255,.075)', chipEdge: 'rgba(255,255,255,.12)', chipText: '#D9DEE3', accentText: '#5BE59A', accentFill: 'rgba(91,229,154,.16)',
+  track: 'rgba(255,255,255,.08)', overlay: [8, 9, 11, .55], hammerHead: '#F2F4F6', hammerHandle: '#C9CFD6', tagline: '#C9D0D6', mutedDot: '#7C858F',
+  glow: 'rgba(60,220,140,', windowShadow: 'rgba(0,0,0,.55)',
+};
+Object.assign(COL, BASE, DARK, THEMES[THEME_NAME] ?? THEMES.dark);
+COL.btnFill ??= COL.accentFill; COL.btnText ??= COL.accentText;
+const PATTERN_A = [1, 0, 1, 0, 1, 1, 1, 1, 0];   // the icon
+const PATTERN_B = [0, 1, 1, 1, 1, 0, 1, 0, 1];   // after the change
+
+// Title typeface, chosen with ?font=… : [family, weight, tracking in px at 60 px].
+const TITLE_FONTS = { geist: ['Geist', 700, -1.2], ny: ['NY', 600, 0], sf: ['SF', 700, -1.2], rounded: ['SFR', 700, -.6], avenir: ['AvenirNext', 600, -.4], helvetica: ['HelveticaNeue', 500, -1] };
+const [TF, TW, TT] = TITLE_FONTS[new URLSearchParams(location.search).get('font') ?? (THEME_NAME === 'arsis' ? 'geist' : 'sf')] ?? TITLE_FONTS.sf;
+// The demo Mac app, chosen with ?app=… (see DEMO_APPS).
+const APP_KEY = new URLSearchParams(location.search).get('app') ?? 'daymon';
+const icon = new Image(); icon.src = `assets/${APP_KEY}.png`;
+// The demo iOS app, chosen with ?ios=loophuntr|fieldnotes.
+const IOS_KEY = new URLSearchParams(location.search).get('ios') ?? 'loophuntr';
+const IOS = { loophuntr: { name: 'LoopHuntr', screen: (w, h, t) => loophuntrScreen(w, h, p(t, T.openI, T.openI + 2.4)) },
+              fieldnotes: { name: 'Fieldnotes', screen: (w, h, t) => fieldnotesScreen(w, h, p(t, T.openI, T.openI + 1)) } }[IOS_KEY];
+const iconIOS = new Image(); iconIOS.src = `assets/${IOS_KEY}.png`;
+window.ready = Promise.all([
+  document.fonts.load('600 40px NY'), document.fonts.load('500 40px SF'), document.fonts.load('400 20px SFM'),
+  document.fonts.load('700 40px Geist'), document.fonts.load('400 40px Geist'),
+  new Promise(r => { icon.onload = r; icon.onerror = r; }), new Promise(r => { iconIOS.onload = r; iconIOS.onerror = r; }),
+  document.fonts.load(`${TW} 40px ${TF}`),
+]);
+
+// ---------- sound cues, read by the render script (seconds, name, gain) ----------
+const SFX = [];
+const cue = (t, name, gain = 1) => SFX.push([+t.toFixed(3), name, gain]);
+
+// ---------- timeline ----------
+const T = {
+  // 1. the fingerprint forms
+  linesIn: [0, 1.3], flicker1: [.35, 1.85], settle1: 1.85, title1: [2.0, 3.75],
+  // 2. same fingerprint, opens instantly — the file names stay long enough to be read
+  shrink: [3.75, 4.45], receiptIn: [4.25, 4.85], head1: [4.45, 8.0],
+  chips: { start: 4.55, step: .42, travel: 1.45, n: 6 }, flicker2: [4.7, 7.95], match1: 8.0,
+  head2: [8.15, 10.45], rowIn: [7.95, 8.4], cursor1: [8.35, 8.9], click1: 8.95, win1: [9.05, 10.4],
+  // 3. a file changes, it builds first
+  head3: [10.75, 16.1], chipChange: [10.8, 12.05], changed: 12.0, cursor2: [12.05, 12.45], click2: 12.5,
+  flicker3: [12.6, 12.95], mismatch: 12.95, build: [13.05, 14.65], hits: [13.25, 13.8, 14.35],
+  settle3: 14.65, receiptFlip: [14.7, 15.05], match3: 15.05, win2: [15.15, 16.15],
+  // 4. iOS: the simulator
+  ios: [16.2, 21.6], iosHead: [16.55, 21.4], iosRow: [16.55, 17.0], cursorI: [16.95, 17.55], clickI: 17.65,
+  simIn: [17.75, 18.25], boot: [18.25, 19.05], install: [19.05, 19.9], openI: 19.95,
+  // 5. the previous build stays
+  head4: [22.1, 25.45], prevIn: [21.9, 22.5], cursor3: [23.1, 23.75], click3: 23.85,
+  // 6. the icon
+  outro: 25.55, iconForm: [25.75, 26.7], word: 26.7, tag: 27.15, foot: 27.5,
+};
+
+// Reading pauses: [moment, extra seconds]. Animations keep their speed; everything after a pause starts later.
+// Spans whose name starts with head/win/ios are what stays on screen, so they grow by the pauses they contain.
+const HOLDS = [[3.0, .6], [8.05, .5], [9.7, .8], [12.03, .5], [15.7, .9], [20.3, 1.6], [24.6, .4]];
+const END_HOLD = .8;
+{
+  const shift = v => HOLDS.reduce((s, [h, d]) => s + (v >= h ? d : 0), 0);
+  const stretch = /^(head|win|ios)/;
+  for (const [k, v] of Object.entries(T)) {
+    if (typeof v === 'number') T[k] = v + shift(v);
+    else if (Array.isArray(v) && v.length === 2 && stretch.test(k)) T[k] = v.map(x => x + shift(x));
+    else if (Array.isArray(v) && k !== 'hits') { const d = shift(v[0]); T[k] = v.map(x => x + d); }
+    else if (Array.isArray(v)) T[k] = v.map(x => x + shift(x));
+    else v.start += shift(v.start);
+  }
+}
+// A pause right after a headline keeps it up until the next one arrives.
+T.head1[1] = Math.max(T.head1[1], T.head2[0] - .15);
+const DURATION = 29.0 + HOLDS.reduce((s, [, d]) => s + d, 0) + END_HOLD;
+
+// Sound cues, declared once from the timeline.
+(() => {
+  for (let i = 0; i < 18; i++) cue(T.flicker1[0] + i * .082, 'tick', .35 + .3 * rnd(i));
+  cue(T.settle1, 'chime', .9);
+  cue(T.shrink[0], 'whoosh', .4);
+  for (let i = 0; i < T.chips.n; i++) cue(T.chips.start + i * T.chips.step + T.chips.travel, 'tick', .5);
+  cue(T.match1, 'chime', .8);
+  cue(T.click1, 'click', 1); cue(T.win1[0], 'whoosh', .55); cue(T.win1[1] - .05, 'whoosh', .35);
+  cue(T.chipChange[1] - .05, 'tick', .6); cue(T.changed, 'blip', .5);
+  cue(T.click2, 'click', 1);
+  for (let i = 0; i < 5; i++) cue(T.flicker3[0] + i * .07, 'tick', .45);
+  cue(T.mismatch, 'blip', .8);
+  T.hits.forEach(h => cue(h, 'hit', 1));
+  cue(T.settle3, 'chime', .9); cue(T.match3, 'chime', .55);
+  cue(T.win2[0], 'whoosh', .55); cue(T.win2[1] - .05, 'whoosh', .35);
+  cue(T.ios[0], 'whoosh', .45); cue(T.clickI, 'click', 1); cue(T.simIn[0], 'whoosh', .4);
+  for (let i = 0; i < 5; i++) cue(T.install[0] + i * .16, 'tick', .35); cue(T.openI, 'chime', .8);
+  cue(T.prevIn[0], 'whoosh', .3); cue(T.click3, 'click', .9);
+  cue(T.outro, 'swell', 1); cue(T.word, 'chime', .7);
+})();
+// Pace, chosen with ?pace=… : the whole film is played slower (>1) or faster (<1); sound cues follow.
+const PACE = +(new URLSearchParams(location.search).get('pace') ?? 1);
+window.SFX = SFX.map(([t, n, g]) => [+(t * PACE).toFixed(3), n, g]);
+window.DURATION = DURATION * PACE;
+
+// ---------- drawing helpers ----------
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+function font(size, weight = 500, family = COL.body) { ctx.font = `${weight} ${size}px ${family}`; }
+
+function background() {
+  const [kind, ...stops] = COL.bg;
+  if (kind === 'flat') { ctx.fillStyle = stops[0]; ctx.fillRect(0, 0, W, H); return; }
+  const g = kind === 'radial' ? ctx.createRadialGradient(W / 2, H * .42, 80, W / 2, H / 2, 1250) : ctx.createLinearGradient(0, H, W, 0);
+  stops.forEach((c, i) => g.addColorStop(i / (stops.length - 1), c));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+
+// The icon's construction lines, drawn progressively (k: 0..1), centred on (cx, cy) at scale s (1 = icon at 1024 px).
+function keylines(cx, cy, s, k, alpha = 1) {
+  if (k <= 0 || alpha <= 0) return;
+  ctx.save(); ctx.globalAlpha = alpha; ctx.strokeStyle = COL.line; ctx.lineWidth = 1.5;
+  const K = 219 * s, R2 = 311 * s, R3 = 512 * s, L = 1400;
+  const line = (x1, y1, x2, y2, d) => {
+    const q = eInOut(p(k, d, d + .55)); if (q <= 0) return;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(lerp(x1, x2, q), lerp(y1, y2, q)); ctx.stroke();
+  };
+  [-K, 0, K].forEach((o, i) => {
+    line(cx + o, cy - L, cx + o, cy + L, i * .06); line(cx - L, cy + o, cx + L, cy + o, .1 + i * .06);
+  });
+  line(cx - L, cy - L, cx + L, cy + L, .25); line(cx + L, cy - L, cx - L, cy + L, .3);
+  [K, R2, R3].forEach((r, i) => {
+    const q = eInOut(p(k, .2 + i * .1, .75 + i * .1)); if (q <= 0) return;
+    ctx.beginPath(); ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + q * Math.PI * 2); ctx.stroke();
+  });
+  ctx.restore();
+}
+
+// A 3×3 fingerprint. cells: array of 9 {on 0..1, green 0..1, orange 0..1, pop 0..1}.
+function grid(cx, cy, cell, cells, { glow = 0, alpha = 1, off = COL.cellOff, on = COL.cellOn, round = COL.round } = {}) {
+  const gap = cell * .18, size = 3 * cell + 2 * gap, o = -size / 2, r = cell * .24 * round;
+  glow *= COL.glowK;
+  ctx.save(); ctx.globalAlpha = alpha;
+  if (glow > 0) {
+    const g = ctx.createRadialGradient(cx, cy, 4, cx, cy, size * 1.1);
+    g.addColorStop(0, `${COL.glow}${.30 * glow})`); g.addColorStop(1, `${COL.glow}0)`);
+    ctx.fillStyle = g; ctx.fillRect(cx - size * 1.2, cy - size * 1.2, size * 2.4, size * 2.4);
+  }
+  cells.forEach((c, i) => {
+    const pop = c.pop ?? 1; if (pop <= 0) return;
+    const sc = lerp(.4, 1, eOut(pop)) * (1 + (c.bump ?? 0) * .08);
+    const x = cx + o + (i % 3) * (cell + gap) + cell / 2, y = cy + o + Math.floor(i / 3) * (cell + gap) + cell / 2;
+    const w = cell * sc;
+    ctx.save(); ctx.globalAlpha *= clamp(pop * 1.5);
+    ctx.shadowColor = COL.cellShadow; ctx.shadowBlur = cell * .12; ctx.shadowOffsetY = cell * .05;
+    rr(x - w / 2, y - w / 2, w, w, r * sc);
+    ctx.fillStyle = off; ctx.fill();
+    if (c.on > 0) { ctx.globalAlpha *= c.on; ctx.fillStyle = on; ctx.fill(); }
+    ctx.shadowColor = 'transparent';
+    if (c.orange > 0) { ctx.globalAlpha = alpha * c.orange * c.on; ctx.fillStyle = COL.orange; ctx.fill(); }
+    if (c.green > 0) {
+      ctx.globalAlpha = alpha * c.green;
+      const g = ctx.createLinearGradient(0, y - w / 2, 0, y + w / 2); g.addColorStop(0, COL.g1); g.addColorStop(1, COL.g2);
+      ctx.fillStyle = g; ctx.fill();
+    }
+    ctx.restore();
+  });
+  ctx.restore();
+  return size;
+}
+
+// Cells for a settled pattern; flickering while `f` (0..1) is computing; `seed` keeps flicker different per moment.
+function cellsFor(pattern, { green = 1, orange = 0, pop = 1, flick = 0, seed = 0, t = 0 } = {}) {
+  return pattern.map((on, i) => {
+    let v = on;
+    if (flick > 0 && i !== 4) { const r = rnd(Math.floor(t * 12) * 9 + i + seed * 100); v = lerp(on, r > .5 ? 1 : 0, flick); }
+    return { on: i === 4 ? 1 : v, green: i === 4 ? green : 0, orange: i === 4 ? 0 : orange, pop: typeof pop === 'function' ? pop(i) : pop };
+  });
+}
+
+// Word-by-word text: each word rises and fades in; out fades all together.
+function words(str, x, y, { size = 56, weight = 500, family = COL.body, color = COL.text, k = 1, out = 0, align = 'center', stagger = .09, tracking = 0 } = {}) {
+  if (k <= 0 || out >= 1) return;
+  font(size, weight, family); ctx.textBaseline = 'alphabetic'; ctx.letterSpacing = `${tracking}px`;
+  const parts = str.split(' '), space = ctx.measureText(' ').width, widths = parts.map(w => ctx.measureText(w).width);
+  const total = widths.reduce((a, b) => a + b, 0) + space * (parts.length - 1);
+  let cx = align === 'center' ? x - total / 2 : x;
+  parts.forEach((w, i) => {
+    const q = eOut(clamp((k * (1 + stagger * parts.length) - i * stagger)));
+    ctx.save(); ctx.globalAlpha = q * (1 - eIn(out)); ctx.fillStyle = color; ctx.letterSpacing = `${tracking}px`;
+    ctx.fillText(w, cx, y + (1 - q) * size * .45 - out * 8); ctx.restore();
+    ctx.letterSpacing = `${tracking}px`;
+    cx += widths[i] + space;
+  });
+  ctx.letterSpacing = '0px';
+}
+const headline = (str, t, [a, b], y = 176) => {
+  if (t < a || t > b) return;
+  words(str, W / 2, y, { size: 60, family: TF, weight: TW, tracking: TT, k: p(t, a, a + .5), out: p(t, b - .3, b) });
+};
+
+function label(str, x, y, { size = 20, color = COL.dim, alpha = 1, align = 'center', weight = 500, family = COL.body, tracking = 0 } = {}) {
+  if (alpha <= 0) return;
+  ctx.save(); ctx.globalAlpha *= alpha; font(size, weight, family); ctx.fillStyle = color; ctx.textAlign = align;
+  if (tracking) ctx.letterSpacing = `${tracking}px`;
+  ctx.fillText(str, x, y); ctx.restore();
+}
+
+function glassCard(x, y, w, h, r, alpha = 1) {
+  ctx.save(); ctx.globalAlpha = alpha;
+  ctx.shadowColor = COL.cardShadow; ctx.shadowBlur = 40; ctx.shadowOffsetY = 18;
+  rr(x, y, w, h, r * COL.round); ctx.fillStyle = COL.card; ctx.fill();
+  ctx.shadowColor = 'transparent'; ctx.strokeStyle = COL.cardEdge; ctx.lineWidth = 1.5; ctx.stroke();
+  const g = ctx.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, COL.cardSheen); g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g; ctx.fill(); ctx.restore();
+}
+
+// File name chip travelling from the left into the grid.
+function chip(str, x, y, { alpha = 1, scale = 1, dot = null, tag = null } = {}) {
+  if (alpha <= 0) return;
+  ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y); ctx.scale(scale, scale);
+  font(22, 400, 'SFM'); const tw = ctx.measureText(str).width; const tagW = tag ? (font(18, 600), ctx.measureText(tag).width + 26) : 0;
+  font(22, 400, 'SFM');
+  const w = tw + 44 + (dot ? 22 : 0) + tagW, h = 46;
+  rr(-w / 2, -h / 2, w, h, 23 * COL.round); ctx.fillStyle = COL.chipFill; ctx.fill(); ctx.strokeStyle = COL.chipEdge; ctx.lineWidth = 1.2; ctx.stroke();
+  let cx = -w / 2 + 22;
+  if (dot) { ctx.fillStyle = dot; ctx.beginPath(); ctx.arc(cx + 5, 0, 5, 0, Math.PI * 2); ctx.fill(); cx += 22; }
+  ctx.fillStyle = COL.chipText; ctx.textBaseline = 'middle'; ctx.fillText(str, cx, 1); cx += tw + 12;
+  if (tag) { font(18, 600); rr(cx, -14, tagW - 12, 28, 14 * COL.round); ctx.fillStyle = 'rgba(242,163,58,.18)'; ctx.fill(); ctx.fillStyle = COL.orange; ctx.fillText(tag, cx + 7, 1); }
+  ctx.restore();
+}
+
+function cursor(x, y, press = 0, ripple = -1) {
+  if (ripple >= 0 && ripple < 1) {
+    ctx.save(); ctx.strokeStyle = `rgba(91,229,154,${.7 * (1 - ripple)})`; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(x, y, 10 + 46 * eOut(ripple), 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+  }
+  ctx.save(); ctx.translate(x, y); const s = 1.35 * (1 - .12 * press); ctx.scale(s, s);
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 26); ctx.lineTo(6.5, 20); ctx.lineTo(11, 30); ctx.lineTo(15, 28.4); ctx.lineTo(10.6, 18.6); ctx.lineTo(19, 18.6); ctx.closePath();
+  ctx.shadowColor = 'rgba(0,0,0,.5)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 3;
+  ctx.fillStyle = '#111'; ctx.fill(); ctx.shadowColor = 'transparent'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.restore();
+}
+
+// Cursor travelling from `from` to `to` over [a, b], clicking at `click`.
+function cursorMoveB(t, [a, b], from, to, click, alpha = 1) {
+  if (t < a || t > click + .7 || alpha <= 0) return;
+  const k = eInOut(p(t, a, b));
+  const x = lerp(from[0], to[0], k), y = lerp(from[1], to[1], k) + Math.sin(k * Math.PI) * -40;
+  ctx.save(); ctx.globalAlpha = Math.min(p(t, a, a + .2), 1 - p(t, click + .45, click + .7)) * alpha;
+  cursor(x, y, t >= click - .06 && t < click + .1 ? 1 : 0, t >= click ? p(t, click, click + .5) : -1); ctx.restore();
+}
+
+// The launcher row for the demo app, with its live state.
+function row(cx, cy, alpha, state, t, { name = APP.name, img = icon } = {}) {
+  const w = 700, h = 104, x = cx - w / 2, y = cy - h / 2;
+  glassCard(x, y, w, h, 26, alpha);
+  ctx.save(); ctx.globalAlpha = alpha;
+  if (img.complete && img.naturalWidth) ctx.drawImage(img, x + 22, y + 18, 68, 68);
+  label(name, x + 108, cy + 9, { size: 30, weight: 600, color: COL.text, align: 'left' });
+  // state pill
+  const st = { ready: ['Ready', COL.dim, COL.mutedDot], changed: ['Changed', COL.orange, COL.orange], building: ['Building…', COL.accentText, COL.accentText], running: ['Running', COL.accentText, COL.accentText], booting: ['Booting…', COL.accentText, COL.accentText], installing: ['Installing…', COL.accentText, COL.accentText] }[state];
+  font(22, 600); const sw = ctx.measureText(st[0]).width;
+  const px = x + 330, py = cy;
+  if (['building', 'booting', 'installing'].includes(state)) {
+    ctx.save(); ctx.translate(px + 8, py); ctx.rotate(t * 7); ctx.strokeStyle = COL.accentText; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 1.4); ctx.stroke(); ctx.restore();
+  } else { ctx.fillStyle = st[2]; ctx.beginPath(); ctx.arc(px + 8, py, 6, 0, Math.PI * 2); ctx.fill(); }
+  label(st[0], px + 24, py + 8, { size: 22, weight: 600, color: st[1], align: 'left' });
+  // Launch button
+  const bx = x + w - 196, by = cy - 26;
+  rr(bx, by, 172, 52, 26 * COL.round); ctx.fillStyle = COL.btnFill; ctx.fill();
+  ctx.fillStyle = COL.btnText; ctx.beginPath(); ctx.moveTo(bx + 36, by + 16); ctx.lineTo(bx + 36, by + 36); ctx.lineTo(bx + 52, by + 26); ctx.closePath(); ctx.fill();
+  label('Launch', bx + 66, by + 34, { size: 24, weight: 600, color: COL.btnText, align: 'left' });
+  ctx.restore();
+  return { button: [bx + 86, by + 26] };
+}
+
+// The app itself: a light window drawn by the demo app. `extra` reveals what the rebuild changed.
+function appWindow(fromX, fromY, k, extra = 0) {
+  if (k <= 0) return;
+  const w = 980, h = 600, cx = lerp(fromX, W / 2, eOut(k)), cy = lerp(fromY, H / 2 + 40, eOut(k)), s = lerp(.18, 1, spring(k, 9, .62));
+  ctx.save(); ctx.globalAlpha = clamp(k * 3);
+  // dim the stage behind
+  { const [r, g, b, a] = COL.overlay; ctx.fillStyle = `rgba(${r},${g},${b},${a * clamp(k * 2)})`; } ctx.fillRect(0, 0, W, H);
+  ctx.translate(cx, cy); ctx.scale(s, s); ctx.translate(-w / 2, -h / 2);
+  ctx.shadowColor = COL.windowShadow; ctx.shadowBlur = 60; ctx.shadowOffsetY = 30;
+  rr(0, 0, w, h, 26 * COL.round); ctx.fillStyle = COL.flat ? '#FFFFFF' : '#F6F7F5'; ctx.fill(); ctx.shadowColor = 'transparent';
+  if (COL.flat) { ctx.strokeStyle = COL.cardEdge; ctx.lineWidth = 1.5; ctx.stroke(); }
+  ['#FF5F57', '#FEBC2E', '#28C840'].forEach((c, i) => { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(32 + i * 26, 32, 8, 0, Math.PI * 2); ctx.fill(); });
+  label(APP.name, w / 2, 40, { size: 22, weight: 600, color: '#2B2F33' });
+  APP.draw(w, h, extra);
+  ctx.restore();
+}
+
+// ---------- demo Mac apps: name, the files the fingerprint reads (the last one is the one that changes), and the window ----------
+function sidebar(items, tint) {
+  rr(16, 64, 220, 520, 16); ctx.fillStyle = '#ECEEEA'; ctx.fill();
+  items.forEach((s2, i) => {
+    if (i === 0) { rr(28, 84, 196, 40, 10); ctx.fillStyle = tint[0]; ctx.fill(); }
+    label(s2, 48, 111 + i * 52, { size: 19, weight: i === 0 ? 600 : 500, color: i === 0 ? tint[1] : '#5B636B', align: 'left' });
+  });
+}
+const pop = extra => spring(clamp(extra), 10, .55);
+const DEMO_APPS = {
+  ledgerline: {
+    name: 'Ledgerline',
+    files: ['Sources/LedgerView.swift', 'Sources/Ledger.swift', 'Resources/Assets.xcassets', 'Package.resolved', 'build.sh', 'Sources/Chart.swift'],
+    draw(w, h, extra) {
+      // sidebar
+      rr(16, 64, 220, h - 80, 16); ctx.fillStyle = '#ECEEEA'; ctx.fill();
+      ['Overview', 'Accounts', 'Budgets', 'Reports'].forEach((s2, i) => {
+        if (i === 0) { rr(28, 84 + i * 52, 196, 40, 10); ctx.fillStyle = 'rgba(46,140,90,.16)'; ctx.fill(); }
+        label(s2, 48, 111 + i * 52, { size: 19, weight: i === 0 ? 600 : 500, color: i === 0 ? '#1E7A4C' : '#5B636B', align: 'left' });
+      });
+      // chart card
+      label('Balance', 276, 116, { size: 22, weight: 600, color: '#2B2F33', align: 'left' });
+      const pts = [.32, .38, .35, .47, .44, .55, .52, .63, .6, .72];
+      const n = pts.length - 1 + extra, cw = 640, ch = 300, ox = 276, oy = 160;
+      ctx.strokeStyle = 'rgba(0,0,0,.06)'; ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) { ctx.beginPath(); ctx.moveTo(ox, oy + i * ch / 4); ctx.lineTo(ox + cw, oy + i * ch / 4); ctx.stroke(); }
+      const all = pts.concat([.84]);
+      const X = i => ox + i * cw / 10, Y = v => oy + ch - v * ch;
+      const draw = Math.min(n, 9 + extra);
+      ctx.beginPath(); ctx.moveTo(X(0), Y(all[0]));
+      for (let i = 1; i <= Math.floor(draw); i++) ctx.lineTo(X(i), Y(all[i]));
+      const fr = draw - Math.floor(draw); if (fr > 0) { const i = Math.floor(draw); ctx.lineTo(lerp(X(i), X(i + 1), fr), lerp(Y(all[i]), Y(all[i + 1]), fr)); }
+      ctx.strokeStyle = '#2E9A5E'; ctx.lineWidth = 4; ctx.lineJoin = 'round'; ctx.stroke();
+      const last = Math.floor(draw), lx = lerp(X(last), X(last + 1), fr), ly = lerp(Y(all[last]), Y(all[last + 1] ?? all[last]), fr);
+      ctx.fillStyle = '#2E9A5E'; ctx.beginPath(); ctx.arc(fr > 0 ? lx : X(last), fr > 0 ? ly : Y(all[last]), 7, 0, Math.PI * 2); ctx.fill();
+      if (extra > .95) label('Export ready', ox + cw - 10, Y(.84) - 18, { size: 18, weight: 600, color: '#1E7A4C', align: 'right' });
+    },
+  },
+
+  // A real project: Daily Monitor, a Tauri app.
+  daymon: {
+    name: 'Daily Monitor',
+    files: ['src/App.svelte', 'src-tauri/src/main.rs', 'src-tauri/tauri.conf.json', 'package.json', 'Cargo.lock', 'src/components/DaySummary.svelte'],
+    draw(w, h, extra) {
+      sidebar(['Today', 'Projects', 'Timeline', 'Reports'], ['rgba(204,64,44,.13)', '#B23A26']);
+      label('Today', 276, 116, { size: 22, weight: 600, color: '#2B2F33', align: 'left' });
+      label('6 h 42', 916, 116, { size: 22, weight: 600, color: '#1C1C1A', align: 'right' });
+      // hour ruler and the day's blocks
+      const ox = 276, cw = 640, oy = 150;
+      ctx.fillStyle = '#1C1C1A'; ctx.fillRect(ox, oy + 58, cw, 3);
+      for (let i = 0; i <= 10; i++) ctx.fillRect(ox + i * cw / 10 - 1, oy + 61, 3, i % 2 ? 7 : 12);
+      [[0, .9, '#1C1C1A'], [1.05, 2.3, '#CC402C'], [2.45, 3.1, '#4E9FD9'], [3.4, 5.6, '#2E8B5A'], [5.8, 6.7, '#1C1C1A'], [6.85, 7.6, '#CC402C']]
+        .forEach(([a, b, c]) => { ctx.fillStyle = c; ctx.fillRect(ox + a * cw / 10, oy, (b - a) * cw / 10, 52); });
+      // per-project rows
+      [['appotheque', 2.9, '#2E8B5A'], ['rhizomes', 1.9, '#CC402C'], ['daymon', 1.2, '#1C1C1A'], ['spicilege', .7, '#4E9FD9']].forEach(([n, v, c], i) => {
+        const y = 270 + i * 54;
+        label(n, ox, y + 22, { size: 19, weight: 500, color: '#3B4046', align: 'left' });
+        ctx.fillStyle = c; ctx.fillRect(ox + 150, y + 6, v * 140, 22);
+        label(`${Math.floor(v)} h ${String(Math.round((v % 1) * 60)).padStart(2, '0')}`, ox + cw, y + 22, { size: 19, weight: 600, color: '#3B4046', align: 'right' });
+      });
+      // after the rebuild: the "now" marker from the icon
+      if (extra > 0) {
+        const k = pop(extra), x = ox + 7.75 * cw / 10;
+        ctx.save(); ctx.globalAlpha *= clamp(extra * 2);
+        ctx.fillStyle = '#CC402C'; ctx.fillRect(x - 2, oy - 6, 4, 80 * k);
+        ctx.beginPath(); ctx.moveTo(x - 12, oy - 18); ctx.lineTo(x + 12, oy - 18); ctx.lineTo(x, oy - 4); ctx.closePath(); ctx.fill();
+        ctx.restore();
+        if (extra > .95) label('Now', x + 18, oy - 4, { size: 18, weight: 600, color: '#B23A26', align: 'left' });
+      }
+    },
+  },
+
+  // A menu bar focus timer.
+  tempo: {
+    name: 'Tempo',
+    files: ['Sources/TimerView.swift', 'Sources/Session.swift', 'Sources/MenuBarItem.swift', 'Resources/chime.caf', 'Package.resolved', 'Sources/Ring.swift'],
+    draw(w, h, extra) {
+      const cx = w / 2, cy = 270, r = 130, frac = .62;
+      ctx.lineCap = 'round';
+      const seg = clamp(extra);   // after the rebuild the ring splits into four sessions
+      const gap = .11 * seg;
+      for (let i = 0; i < 4; i++) {
+        const a0 = -Math.PI / 2 + i * Math.PI / 2 + gap, a1 = -Math.PI / 2 + (i + 1) * Math.PI / 2 - gap;
+        ctx.strokeStyle = 'rgba(232,85,58,.15)'; ctx.lineWidth = 22; ctx.beginPath(); ctx.arc(cx, cy, r, a0, a1); ctx.stroke();
+        const end = -Math.PI / 2 + frac * Math.PI * 2;
+        if (end > a0) { ctx.strokeStyle = '#E8553A'; ctx.beginPath(); ctx.arc(cx, cy, r, a0, Math.min(a1, end)); ctx.stroke(); }
+      }
+      label('14:47', cx, cy + 20, { size: 58, weight: 600, color: '#2B2F33' });
+      label('Deep work', cx, cy + 56, { size: 20, weight: 500, color: '#7A8087' });
+      if (extra > .3) label('Session 3 of 4', cx, cy + r + 58, { size: 21, weight: 600, color: '#C4452E', alpha: clamp((extra - .3) * 2) });
+      // controls
+      [['Pause', cx - 90], ['Skip', cx + 90]].forEach(([s2, x]) => {
+        rr(x - 70, 518, 140, 44, 22); ctx.fillStyle = s2 === 'Pause' ? 'rgba(232,85,58,.14)' : '#ECEEEA'; ctx.fill();
+        label(s2, x, 547, { size: 19, weight: 600, color: s2 === 'Pause' ? '#C4452E' : '#5B636B' });
+      });
+    },
+  },
+
+  // A colour palette tool.
+  hue: {
+    name: 'Hue',
+    files: ['Sources/PaletteView.swift', 'Sources/Swatch.swift', 'Sources/ColorMath.swift', 'Resources/Assets.xcassets', 'Package.resolved', 'Sources/Export.swift'],
+    draw(w, h, extra) {
+      sidebar(['Ivory', 'Forest', 'Dusk', 'Harbour'], ['rgba(155,134,255,.18)', '#6A55D8']);
+      label('Ivory', 276, 116, { size: 22, weight: 600, color: '#2B2F33', align: 'left' });
+      const sw = [['#F6F1E7', 'F6F1E7'], ['#E4D9C3', 'E4D9C3'], ['#C9A97A', 'C9A97A'], ['#8C6A43', '8C6A43'], ['#2E8B5A', '2E8B5A'], ['#1F3B33', '1F3B33'], ['#E07A5F', 'E07A5F']];
+      const n = 6 + clamp(extra);
+      sw.forEach(([c, hex], i) => {
+        const k = i < 6 ? 1 : pop(extra); if (k <= 0) return;
+        const col = i % 4, rowI = Math.floor(i / 4), x = 276 + col * 160, y = 150 + rowI * 190;
+        ctx.save(); ctx.translate(x + 70, y + 60); ctx.scale(k, k); ctx.translate(-x - 70, -y - 60);
+        rr(x, y, 140, 120, 18); ctx.fillStyle = c; ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,.08)'; ctx.lineWidth = 1.5; ctx.stroke();
+        label('#' + hex, x + 4, y + 150, { size: 17, family: 'SFM', weight: 400, color: '#5B636B', align: 'left' });
+        ctx.restore();
+      });
+      // after the rebuild: an export button
+      if (extra > .5) {
+        const a = clamp((extra - .5) * 2);
+        ctx.save(); ctx.globalAlpha *= a; rr(716, 520, 200, 44, 22); ctx.fillStyle = 'rgba(155,134,255,.2)'; ctx.fill(); ctx.restore();
+        label('Copy as Swift', 816, 549, { size: 19, weight: 600, color: '#5A45C8', alpha: a });
+      }
+    },
+  },
+
+  // A writing app.
+  margin: {
+    name: 'Margin',
+    files: ['Sources/EditorView.swift', 'Sources/Document.swift', 'Sources/Markdown.swift', 'Resources/Assets.xcassets', 'Package.resolved', 'Sources/WordCount.swift'],
+    draw(w, h, extra) {
+      const focus = clamp(extra);
+      const ox = 150, cw = 680;
+      label('Notes on shipping', ox, 140, { size: 34, weight: 700, color: '#2B2F33', align: 'left' });
+      const paras = [[1, .96, .9, .55], [1, .93, .97, .88, .4], [1, .9, .7]];
+      let y = 180;
+      paras.forEach((lines, pi) => {
+        const dim = pi === 1 ? 1 : 1 - .65 * focus;
+        lines.forEach((lw, li) => {
+          rr(ox, y, cw * lw, 14, 7); ctx.fillStyle = `rgba(60,64,70,${.22 * dim})`; ctx.fill();
+          if (pi === 1 && li === 1) { rr(ox + 210, y - 6, 150, 26, 6); ctx.fillStyle = 'rgba(242,140,40,.28)'; ctx.fill(); }
+          y += 25;
+        });
+        y += 20;
+      });
+      // after the rebuild: focus mode and a word count
+      ctx.fillStyle = 'rgba(0,0,0,.06)'; ctx.fillRect(16, 540, w - 32, 1.5);
+      label('Markdown', 40, 570, { size: 17, weight: 500, color: '#7A8087', align: 'left' });
+      if (extra > .3) {
+        const a = clamp((extra - .3) * 2);
+        label('Focus  ·  1,248 words', w - 40, 570, { size: 17, weight: 600, color: '#C46A1C', align: 'right', alpha: a });
+      }
+    },
+  },
+};
+const APP = DEMO_APPS[APP_KEY] ?? DEMO_APPS.ledgerline;
+
+function hammer(x, y, swing) {
+  // swing: 0 = up, 1 = struck
+  ctx.save(); ctx.translate(x, y); ctx.rotate(lerp(-.9, .25, swing));
+  ctx.fillStyle = COL.hammerHandle; rr(-5, -6, 10, 64, 5); ctx.fill();
+  ctx.fillStyle = COL.hammerHead; rr(-24, -22, 48, 22, 6); ctx.fill();
+  ctx.restore();
+}
+
+// ---------- iOS: a stylized simulator ----------
+function phoneFrame(cx, cy, k, screen) {
+  if (k <= 0) return;
+  const w = 340, h = 700, s = lerp(.7, 1, spring(k, 10, .55));
+  ctx.save(); ctx.globalAlpha *= clamp(k * 2.5); ctx.translate(cx, cy); ctx.scale(s, s); ctx.translate(-w / 2, -h / 2);
+  ctx.shadowColor = COL.windowShadow; ctx.shadowBlur = 60; ctx.shadowOffsetY = 28;
+  rr(0, 0, w, h, 58); ctx.fillStyle = '#1B1E22'; ctx.fill(); ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = 'rgba(255,255,255,.16)'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.save(); rr(12, 12, w - 24, h - 24, 48); ctx.clip(); ctx.translate(12, 12); screen(w - 24, h - 24); ctx.restore();
+  rr(w / 2 - 52, 24, 104, 30, 15); ctx.fillStyle = '#000'; ctx.fill();
+  ctx.restore();
+}
+function bootScreen(w, h, t) {
+  ctx.fillStyle = '#0B0C0E'; ctx.fillRect(0, 0, w, h);
+  ctx.save(); ctx.translate(w / 2, h / 2 - 10); ctx.rotate(t * 6); ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(0, 0, 18, 0, Math.PI * 1.4); ctx.stroke(); ctx.restore();
+  label('Booting…', w / 2, h / 2 + 50, { size: 20, weight: 600, color: '#C9D0D6' });
+}
+function installScreen(w, h, k) {
+  ctx.fillStyle = '#0B0C0E'; ctx.fillRect(0, 0, w, h);
+  if (iconIOS.complete && iconIOS.naturalWidth) ctx.drawImage(iconIOS, w / 2 - 64, h / 2 - 120, 128, 128);
+  ctx.strokeStyle = 'rgba(255,255,255,.15)'; ctx.lineWidth = 6; ctx.beginPath(); ctx.arc(w / 2, h / 2 + 70, 24, 0, Math.PI * 2); ctx.stroke();
+  ctx.strokeStyle = COL.g1; ctx.beginPath(); ctx.arc(w / 2, h / 2 + 70, 24, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2); ctx.stroke();
+  label('Installing…', w / 2, h / 2 + 136, { size: 20, weight: 600, color: '#C9D0D6' });
+}
+function fieldnotesScreen(w, h, k) {
+  const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#E3F5EE'); g.addColorStop(1, '#C8EADC'); ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+  label('Fieldnotes', 26, 116, { size: 36, weight: 700, color: '#1E5C4A', align: 'left' });
+  ['Heron at the marsh', 'Oak leaf shapes', 'Rain after noon'].forEach((s2, i) => {
+    const q = eOut(p(k, .1 + i * .15, .6 + i * .15)); if (q <= 0) return;
+    ctx.save(); ctx.globalAlpha *= q; ctx.translate(0, (1 - q) * 30);
+    rr(18, 146 + i * 100, w - 36, 86, 18); ctx.fillStyle = 'rgba(255,255,255,.78)'; ctx.fill();
+    rr(32, 164 + i * 100, 50, 50, 12); ctx.fillStyle = ['#5CC7A8', '#8DBF5A', '#5AA3C7'][i]; ctx.fill();
+    label(s2, 96, 196 + i * 100, { size: 19, weight: 600, color: '#24463C', align: 'left' });
+    ctx.restore();
+  });
+}
+
+// LoopHuntr: a loop is generated around the start point on a dark topographic map.
+// k runs 0 → 1 over the generation; the messages are the app's own steps, in English.
+function loopPath(cx, cy, R, wob, n = 120) {
+  // A closed, lumpy loop that starts and ends at the bottom-left start point.
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const th = 2.3 + (i / n) * Math.PI * 2;
+    const r = R * (1 + wob[0] * Math.sin(2 * th + wob[1]) + wob[2] * Math.sin(3 * th + wob[3]) + .05 * Math.sin(7 * th));
+    pts.push([cx + r * Math.cos(th) * .82, cy + r * Math.sin(th)]);
+  }
+  return pts;
+}
+function strokePart(pts, f) {
+  // Strokes the first fraction f of a polyline.
+  const n = (pts.length - 1) * clamp(f), whole = Math.floor(n);
+  if (n <= 0) return;
+  ctx.beginPath(); ctx.moveTo(...pts[0]);
+  for (let i = 1; i <= whole; i++) ctx.lineTo(...pts[i]);
+  if (whole < pts.length - 1) { const a = pts[whole], b = pts[whole + 1], r = n - whole; ctx.lineTo(lerp(a[0], b[0], r), lerp(a[1], b[1], r)); }
+  ctx.stroke();
+}
+function loophuntrScreen(w, h, k) {
+  ctx.fillStyle = '#123A2B'; ctx.fillRect(0, 0, w, h);
+  // contour lines
+  ctx.strokeStyle = 'rgba(160,220,180,.10)'; ctx.lineWidth = 1.5;
+  for (let j = 0; j < 22; j++) {
+    ctx.beginPath();
+    for (let x = -10; x <= w + 10; x += 8) {
+      const y = j * 34 - 20 + 14 * Math.sin(x * .021 + j * .7) + 9 * Math.sin(x * .047 - j * 1.3);
+      x < -5 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  const cx = w / 2 + 4, cy = h * .46, R = 118;
+  const main = loopPath(cx, cy, R, [.16, .4, .1, 1.2]);
+  const altA = loopPath(cx - 14, cy + 6, R * .9, [.24, 1.4, .08, .2]);
+  const altB = loopPath(cx + 16, cy - 4, R * 1.06, [.1, 2.2, .16, 2.4]);
+  const start = main[0];
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  // candidates being tried, then set aside
+  [[altA, '#3D8BFF', .08], [altB, '#F2A33A', .2]].forEach(([pts, c, d]) => {
+    const f = eInOut(p(k, d, d + .35)), fade = 1 - .55 * p(k, .55, .7);
+    ctx.save(); ctx.globalAlpha *= fade; ctx.setLineDash([12, 12]); ctx.strokeStyle = c; ctx.lineWidth = 6; strokePart(pts, f); ctx.restore();
+  });
+  // the chosen loop
+  const fm = eInOut(p(k, .42, .8));
+  ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 10; ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 9; strokePart(main, fm); ctx.restore();
+  // start point
+  const pk = spring(p(k, 0, .15), 10, .5);
+  ctx.save(); ctx.translate(...start); ctx.scale(pk, pk);
+  ctx.fillStyle = '#123A2B'; ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.restore();
+  // status pill: the generation steps
+  const msg = k < .22 ? 'Drawing a circle around your start…' : k < .45 ? 'Valhalla is finding the best tracks…' : k < .8 ? 'Counting the climbs…' : 'First loop ready';
+  font(15, 600); const mw = ctx.measureText(msg).width + 40;
+  rr(w / 2 - mw / 2, 62, mw, 38, 19); ctx.fillStyle = 'rgba(10,26,20,.72)'; ctx.fill();
+  label(msg, w / 2, 86, { size: 15, weight: 600, color: k < .8 ? '#E4EEE8' : '#7FE0A8' });
+  // result card
+  const ck = eOut(p(k, .8, .95));
+  if (ck > 0) {
+    ctx.save(); ctx.globalAlpha *= ck; ctx.translate(0, (1 - ck) * 40);
+    rr(14, h - 170, w - 28, 140, 26); ctx.fillStyle = 'rgba(248,250,248,.96)'; ctx.fill();
+    label('Loop 1', 34, h - 128, { size: 16, weight: 600, color: '#5B6B63', align: 'left' });
+    label('41.2 km  ·  520 m', 34, h - 94, { size: 26, weight: 700, color: '#14261E', align: 'left' });
+    label('Gravel  ·  mostly tracks', 34, h - 62, { size: 16, weight: 500, color: '#5B6B63', align: 'left' });
+    ctx.restore();
+  }
+}
+
+// ---------- the film ----------
+function drawAt(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.textAlign = 'left';
+  background();
+
+  // Camera: a slow push-out at the start, a gentle drift elsewhere, a push-in on the outro.
+  const cam = lerp(1.32, 1, eInOut(p(t, 0, 3.4))) * lerp(1, 1.06, eInOut(p(t, T.outro, DURATION)));
+  ctx.translate(W / 2, H / 2); ctx.scale(cam, cam); ctx.translate(-W / 2, -H / 2);
+
+  const stage = t < T.outro ? 1 : 1 - eOut(p(t, T.outro, T.outro + .45));   // everything but the hero grid fades on the outro
+  const iosK = span(t, T.ios[0], T.ios[1], .35, .35);
+  const mac = 1 - span(t, T.ios[0], T.ios[1] + .4, .35, .35);                    // the Mac story steps aside, and returns once iOS has gone
+
+  // ---- hero grid position: centre → left ("Now") → centre on the outro
+  const toLeft = eInOut(p(t, ...T.shrink)), toCentre = eInOut(p(t, T.outro, T.iconForm[1]));
+  const gx = lerp(lerp(W / 2, 700, toLeft), W / 2, toCentre), gy = lerp(lerp(500, 470, toLeft), 400, toCentre);
+  const gcell = lerp(lerp(118, 66, toLeft), 66, toCentre);
+
+  keylines(gx, gy, gcell / 132, p(t, ...T.linesIn), lerp(1, .55, toLeft) * lerp(1, 1.8, toCentre) * (t > T.outro ? 1 : stage));
+
+  // ---- pattern state over time
+  let pattern = PATTERN_A, flick = 0, green = 1, orange = 0, seed = 0, bump = 0, glow = 0;
+  if (t < T.settle1) { flick = 1 - eOut(p(t, T.settle1 - .3, T.settle1)); green = 0; seed = 1; }
+  glow = spring(p(t, T.settle1, T.settle1 + 1.2), 8, .35) * (1 - p(t, T.shrink[0], T.shrink[1]) * .6);
+  const f2 = p(t, ...T.flicker2); if (f2 > 0 && f2 < 1) { flick = Math.sin(f2 * Math.PI) ; seed = 2; }
+  if (t >= T.chipChange[1]) { pattern = PATTERN_B; }
+  if (t >= T.flicker3[0] && t < T.mismatch) { flick = 1; seed = 3; pattern = PATTERN_B; }
+  if (t >= T.mismatch && t < T.settle3) { orange = 1; green = .25; }
+  if (t >= T.settle3) { green = eOut(p(t, T.settle3, T.settle3 + .3)); orange = 1 - green; }
+  T.hits.forEach(h => { bump = Math.max(bump, Math.exp(-14 * Math.max(0, t - h)) * (t >= h ? 1 : 0)); });
+  if (t >= T.outro) { const m = p(t, T.iconForm[0], T.iconForm[0] + .5); pattern = m < 1 ? PATTERN_B.map((v, i) => rnd(Math.floor(t * 12) * 9 + i) > .5 ? 1 : 0) : PATTERN_A; if (m >= 1) pattern = PATTERN_A; green = 1; orange = 0; flick = 0; glow = spring(p(t, T.iconForm[0] + .5, T.iconForm[1] + .6), 8, .4); }
+
+  const heroA = t < T.outro ? mac * (1 - eOut(p(t, T.prevIn[0] - .4, T.prevIn[0]))) : eOut(p(t, T.outro, T.outro + .45));
+  const popIn = i => p(t, .3 + i * .09, .75 + i * .09);
+  const heroCells = cellsFor(pattern, { green, orange, flick, seed, t, pop: t < 2 ? popIn : 1 }).map(c => ({ ...c, bump }));
+
+  // ---- outro: the icon body forms around the grid
+  if (t >= T.outro) {
+    const k = eOut(p(t, ...T.iconForm)), size = 3 * gcell + 2 * gcell * .18, body = size * 2.08;
+    ctx.save(); ctx.globalAlpha = k;
+    ctx.shadowColor = 'rgba(0,0,0,.6)'; ctx.shadowBlur = 50; ctx.shadowOffsetY = 24;
+    rr(gx - body / 2, gy - body / 2, body, body, body * .225);
+    const g = ctx.createLinearGradient(gx - body / 2, gy - body / 2, gx + body / 2, gy + body / 2); g.addColorStop(0, '#2A3038'); g.addColorStop(1, '#111418');
+    ctx.fillStyle = g; ctx.fill(); ctx.shadowColor = 'transparent'; ctx.strokeStyle = 'rgba(255,255,255,.08)'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.save(); ctx.clip(); ctx.globalAlpha = k * .9;
+    // icon keylines inside the body
+    ctx.strokeStyle = 'rgba(255,255,255,.09)'; ctx.lineWidth = 1.5; const s = body / 1024, K = 219 * s;
+    [-K, 0, K].forEach(o => { ctx.beginPath(); ctx.moveTo(gx + o, gy - body); ctx.lineTo(gx + o, gy + body); ctx.moveTo(gx - body, gy + o); ctx.lineTo(gx + body, gy + o); ctx.stroke(); });
+    [K, 311 * s, 512 * s].forEach(r => { ctx.beginPath(); ctx.arc(gx, gy, r, 0, Math.PI * 2); ctx.stroke(); });
+    ctx.restore(); ctx.restore();
+  }
+
+  const onIcon = t >= T.outro + .3;
+  grid(gx, gy, gcell, heroCells, { glow, alpha: heroA, off: onIcon ? 'rgba(255,255,255,.07)' : COL.cellOff, on: onIcon ? '#58616C' : COL.cellOn, round: onIcon ? 1 : COL.round });
+
+  // ---- 1. title
+  words('Every build has a fingerprint.', W / 2, 870, { size: 64, family: TF, weight: TW, tracking: TT * 64 / 60, k: p(t, T.title1[0], T.title1[0] + .55), out: p(t, T.title1[1] - .3, T.title1[1]) });
+
+  // ---- 2. labels under the grids, the receipt grid and the comparison sign
+  const recA = span(t, T.receiptIn[0], T.outro + .3) * stage * mac, kPrev = eInOut(p(t, ...T.prevIn));
+  const rx = lerp(1220 + (1 - eOut(p(t, ...T.receiptIn))) * 160, 800, kPrev), ry = 470;
+  label('NOW', gx, gy + 152, { size: 18, weight: 600, tracking: 3, alpha: p(t, T.shrink[0] + .55, T.shrink[0] + .95) * stage * heroA });
+  if (recA > 0) {
+    const flip = p(t, ...T.receiptFlip);
+    const recCells = (flip > 0 ? PATTERN_B : PATTERN_A).map((v, i) => ({ on: i === 4 ? 1 : v, green: i === 4 ? 1 : 0, orange: 0, pop: flip > 0 ? Math.abs(Math.cos(Math.min(1, flip * 1.6 - i * .05) * Math.PI)) * .6 + .4 : 1 }));
+    grid(rx, ry, 66, recCells, { alpha: recA });
+    label('LAST BUILD', rx, ry + 152, { size: 18, weight: 600, tracking: 3, alpha: recA * (1 - clamp(kPrev * 2)) });
+    label('CURRENT', rx, ry + 152, { size: 18, weight: 600, tracking: 3, alpha: recA * clamp(kPrev * 2 - 1) });
+  }
+  // comparison sign between the grids
+  const cmpA = span(t, T.match1 - .05, T.ios[0] + .2, .35, .4) * stage * (t >= T.chipChange[1] && t < T.mismatch ? 1 - eOut(p(t, T.chipChange[1], T.chipChange[1] + .2)) : 1);
+  if (cmpA > 0) {
+    const mx = (700 + 1220) / 2, my = 470;
+    const bad = t >= T.mismatch && t < T.match3;
+    const pulse = t >= T.match1 && t < T.match1 + .5 ? spring(p(t, T.match1, T.match1 + .5), 14, .3) : 1;
+    ctx.save(); ctx.globalAlpha = cmpA; ctx.translate(mx, my);
+    const s = (bad ? 1 + .1 * Math.sin(Math.min(1, (t - T.mismatch) * 3) * Math.PI * 3) : pulse);
+    ctx.scale(s, s);
+    ctx.fillStyle = bad ? 'rgba(242,163,58,.16)' : COL.accentFill; ctx.beginPath(); ctx.arc(0, 0, 44, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = bad ? COL.orange : COL.accentText; ctx.lineWidth = 6; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-16, -8); ctx.lineTo(16, -8); ctx.moveTo(-16, 8); ctx.lineTo(16, 8); ctx.stroke();
+    if (bad) { ctx.beginPath(); ctx.moveTo(10, -22); ctx.lineTo(-10, 22); ctx.stroke(); }
+    ctx.restore();
+  }
+
+  // files flowing into the grid
+  const files = APP.files;
+  files.forEach((f, i) => {
+    const a = T.chips.start + i * T.chips.step, k = p(t, a, a + T.chips.travel);
+    if (k <= 0 || k >= 1) return;
+    const y = 300 + i * 68, a1 = eOut(p(k, 0, .3)), a2 = eIn(p(k, .75, 1));
+    chip(f, lerp(lerp(150, 400, a1), 700, a2), lerp(y, 470, a2), { alpha: (1 - p(k, .9, 1)) * clamp(k * 6), scale: lerp(1, .25, a2), dot: i === 5 ? COL.mutedDot : null });
+  });
+  // the change
+  {
+    const k = p(t, ...T.chipChange);
+    const a1 = eOut(p(k, 0, .35)), a2 = eIn(p(k, .72, 1));
+    if (k > 0 && k < 1) chip(APP.files[5], lerp(lerp(150, 380, a1), 700, a2), lerp(400, 470, a2), { alpha: (1 - p(k, .9, 1)) * clamp(k * 6), scale: lerp(1, .25, a2), dot: COL.orange, tag: 'modified' });
+  }
+
+  // build bar under the hero grid
+  const bA = span(t, T.build[0], T.settle3 + .35) * stage;
+  if (bA > 0) {
+    const k = p(t, ...T.build), bx = 700 - 150, by = 668;
+    ctx.save(); ctx.globalAlpha = bA;
+    rr(bx, by, 300, 10, 5); ctx.fillStyle = COL.track; ctx.fill();
+    rr(bx, by, 300 * eInOut(k), 10, 5); ctx.fillStyle = COL.g1; ctx.fill();
+    ctx.restore();
+    label(t < T.settle3 ? 'Building…' : 'Built', 700, by + 44, { size: 22, weight: 600, color: COL.accentText, alpha: bA });
+    const swing = T.hits.reduce((s, h) => (t >= h - .28 && t < h + .2) ? (t < h ? eIn(p(t, h - .28, h)) : 1 - eOut(p(t, h, h + .2))) : s, 0);
+    ctx.save(); ctx.globalAlpha = bA * span(t, T.build[0], T.settle3); hammer(850, 318, swing); ctx.restore();
+  }
+
+  // ---- the launcher row
+  const rowA = span(t, T.rowIn[0], T.outro + .3, .4, .35) * stage * mac;
+  let state = 'ready';
+  if (t >= T.changed && t < T.click2 + .1) state = 'changed';
+  if (t >= T.click2 + .1 && t < T.settle3) state = 'building';
+  const rowY = 820 + (1 - eOut(p(t, ...T.rowIn))) * 60;
+  let btn = [1240, 820];
+  if (rowA > 0) btn = row(W / 2, rowY, rowA, state, t).button;
+
+  // ---- the previous build card
+  const prevA = span(t, T.prevIn[0], T.outro + .3) * stage;
+  if (prevA > 0) {
+    const k = eInOut(p(t, ...T.prevIn));
+    const px = lerp(rx, 1120, k), py = 470;
+    const glowK = t >= T.click3 ? Math.exp(-3 * (t - T.click3)) : 0;
+    grid(px, py, 44, PATTERN_A.map((v, i) => ({ on: i === 4 ? 1 : v, green: i === 4 ? .55 + .45 * glowK : 0 })), { alpha: prevA * k, glow: glowK });
+    label('PREVIOUS BUILD', px, py + 110, { size: 16, weight: 600, tracking: 3, alpha: prevA * k });
+    // Open button
+    rr(px - 56, py + 132, 112, 40, 20 * COL.round); ctx.save(); ctx.globalAlpha = prevA * k; ctx.fillStyle = COL.btnFill; ctx.fill(); ctx.restore();
+    label('Open', px, py + 159, { size: 20, weight: 600, color: COL.btnText, alpha: prevA * k });
+  }
+
+
+  // ---- app windows
+  const w1 = t < T.win1[1] ? eOut(p(t, T.win1[0], T.win1[0] + .45)) * (1 - eIn(p(t, T.win1[1] - .35, T.win1[1]))) : 0;
+  appWindow(btn[0], btn[1], w1, 0);
+  const w2 = t < T.win2[1] ? eOut(p(t, T.win2[0], T.win2[0] + .45)) * (1 - eIn(p(t, T.win2[1] - .3, T.win2[1]))) : 0;
+  appWindow(btn[0], btn[1], w2, eInOut(p(t, T.win2[0] + .3, T.win2[0] + .8)));
+
+  // ---- 4. iOS: the demo iOS app on a simulator
+  if (iosK > 0) {
+    const a = iosK * stage, ry = 470, rx = 640;
+    const st = t < T.clickI ? 'ready' : t < T.simIn[0] ? 'building' : t < T.install[0] ? 'booting' : t < T.openI ? 'installing' : 'running';
+    let b = [880, ry];
+    const rk = eOut(p(t, ...T.iosRow));
+    ctx.save(); ctx.globalAlpha = a * rk; ctx.translate(-(1 - rk) * 80, 0);
+    b = row(rx, ry, a * rk, st, t, { name: IOS.name, img: iconIOS }).button;
+    // destination pill
+    rr(rx - 235, ry + 78, 470, 52, 26 * COL.round); ctx.fillStyle = COL.chipFill; ctx.fill(); ctx.strokeStyle = COL.chipEdge; ctx.lineWidth = 1.2; ctx.stroke();
+    rr(rx - 205, ry + 90, 17, 28, 5); ctx.strokeStyle = COL.dim; ctx.lineWidth = 2; ctx.stroke();
+    label('iPhone 17 Pro  ·  iOS 27  ·  Simulator', rx + 18, ry + 112, { size: 20, weight: 600, color: COL.chipText });
+    // what Appothèque is doing, in its own words
+    const step = t < T.clickI ? '' : t < T.simIn[0] ? 'Building for iPhone 17 Pro…' : t < T.install[0] ? 'Booting iPhone 17 Pro…' : t < T.openI ? 'Installing on iPhone 17 Pro…' : 'Opened on iPhone 17 Pro';
+    if (step) label(step, rx, ry + 180, { size: 22, weight: 600, color: COL.accentText, alpha: p(t, T.clickI, T.clickI + .2) });
+    ctx.restore();
+    cursorMoveB(t, T.cursorI, [1200, 900], b, T.clickI, a);
+    const k = p(t, ...T.simIn) * a;
+    label('SIMULATOR', 1340, 950, { size: 18, weight: 600, tracking: 3, alpha: k });
+    phoneFrame(1340, 560, k, (w, h) => t < T.install[0] ? bootScreen(w, h, t) : t < T.openI ? installScreen(w, h, p(t, ...T.install)) : IOS.screen(w, h, t));
+  }
+
+  // ---- headlines
+  headline("Appothèque fingerprints your project's files.", t, T.head1);
+  headline('Nothing changed? It opens instantly.', t, T.head2);
+  headline('Something changed? It builds first.', t, T.head3);
+  headline('The previous build stays one click away.', t, T.head4);
+  headline('iPhone and iPad apps open in the Simulator.', t, T.iosHead, 150);
+
+  // ---- cursor
+  const path = [
+    [T.cursor1, [1500, 1000], btn, T.click1],
+    [T.cursor2, [1420, 980], btn, T.click2],
+    [T.cursor3, [1400, 900], [1120, 622], T.click3],
+  ];
+  path.forEach(([[a, b], from, to, click]) => {
+    if (t < a || t > click + .7) return;
+    const k = eInOut(p(t, a, b));
+    const x = lerp(from[0], to[0], k), y = lerp(from[1], to[1], k) + Math.sin(k * Math.PI) * -40;
+    const press = t >= click - .06 && t < click + .1 ? 1 : 0;
+    ctx.save(); ctx.globalAlpha = Math.min(p(t, a, a + .2), 1 - p(t, click + .45, click + .7)) * stage;
+    cursor(x, y, press, t >= click ? p(t, click, click + .5) : -1); ctx.restore();
+  });
+
+  // ---- outro type
+  words('Appothèque', W / 2, 800, { size: 96, family: TF, weight: TW, tracking: TT * 96 / 60, k: p(t, T.word, T.word + .6) });
+  words('Builds only what changed.', W / 2, 870, { size: 38, weight: 500, color: COL.tagline, k: p(t, T.tag, T.tag + .6) });
+  label('Free and open source  ·  macOS 26', W / 2, 940, { size: 22, weight: 500, alpha: eOut(p(t, T.foot, T.foot + .5)) });
+}
+window.seek = t => drawAt(t / PACE);
+window.ready.then(() => seek(0));
+</script>
+</body>
+</html>

@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>App Icônes</title>
+<!--
+  ROUND PAGE TEMPLATE (app-icon-studio skill)
+  Copy next to canvas-kit.js as vN.html, then edit ONLY the "ROUND CONFIG" block:
+  ROUND (title, lead, file prefix, platform) and CONCEPTS ({ id, name, desc, draw(ctx), glyph?(ctx) }).
+  draw(ctx) paints a full-bleed, opaque 1024×1024 icon. Everything else is handled here:
+  - platform 'ios'   → previews at 60/29 pt on light & dark wallpapers.
+  - platform 'macos' → the art is masked into the macOS grid (824 squircle inset in 1024, drop
+    shadow) and previewed at 64/32/16 pt on a light and a dark Finder background.
+  - glyph(ctx) (optional): monochrome menu-bar template, black on transparent, filling the
+    1024 canvas. Previewed at 18 pt on a light and a dark menu bar.
+  - window.exportSheet('sheet-v2') renders a contact sheet of every concept (all preview sizes,
+    @2x pixels) and POSTs it to /__save/ → exports/sheet-v2.png, to inspect with the Read tool.
+  - window.exportAll('v2') saves every concept's 1024 PNG (and mac/glyph variants) to exports/.
+  Serve over HTTP (scripts/serve.py): file:// previews do not run canvas JS in the browser pane.
+-->
+<style>
+  :root { --bg:#f4f3ef; --card:#ffffff; --ink:#1b1d1c; --muted:#6b706c; --line:#e3e1da; --err:#b3261e; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#121413; --card:#1c1f1d; --ink:#eef0ec; --muted:#9aa19c; --line:#2b2f2c; --err:#f2b8b5; } }
+  :root[data-theme="dark"] { --bg:#121413; --card:#1c1f1d; --ink:#eef0ec; --muted:#9aa19c; --line:#2b2f2c; --err:#f2b8b5; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 -apple-system, system-ui, sans-serif; padding:32px 16px 64px; }
+  header, .grid { max-width:1100px; margin:0 auto; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  p.lead { color:var(--muted); margin:0 0 28px; max-width:760px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:20px; display:flex; flex-direction:column; gap:14px; min-width:0; }
+  .big { width:100%; max-width:260px; aspect-ratio:1; border-radius:22.37%; align-self:center; box-shadow:0 10px 30px rgba(0,0,0,.18); }
+  .row { display:flex; align-items:center; gap:14px; justify-content:center; flex-wrap:wrap; }
+  .row img { border-radius:22.37%; display:block; }
+  .home { background:linear-gradient(160deg,#5a7bd8,#b56fd0); border-radius:12px; padding:12px 18px; }
+  .home.dark { background:linear-gradient(160deg,#1d2433,#000); }
+  .finder { background:#f6f6f6; border:1px solid #ddd; border-radius:10px; padding:10px 14px; }
+  .finder.dark { background:#1e1e1e; border-color:#333; }
+  .finder img, .big.mac { border-radius:0; box-shadow:none; }
+  .menubar { display:flex; align-items:center; gap:14px; height:24px; padding:0 12px; border-radius:6px; background:rgba(236,236,236,.95); border:1px solid #ddd; font:13px -apple-system, system-ui; color:#111; }
+  .menubar.dark { background:rgba(30,30,30,.95); border-color:#333; color:#eee; }
+  .menubar img { display:block; }
+  h2 { font-size:16px; margin:0; }
+  .desc { color:var(--muted); font-size:13.5px; margin:0; }
+  button { font:inherit; font-size:13px; border:1px solid var(--line); background:transparent; color:var(--ink); border-radius:8px; padding:6px 10px; cursor:pointer; align-self:flex-start; }
+  button:hover { background:var(--line); }
+  .error { color:var(--err); font:12px/1.4 ui-monospace, monospace; white-space:pre-wrap; margin:0; }
+</style>
+</head>
+<body>
+<header><h1 id="title"></h1><p class="lead" id="lead"></p></header>
+<div class="grid" id="grid"></div>
+
+<script src="canvas-kit.js"></script>
+<script>
+// ======================= ROUND CONFIG — edit from here =======================
+const ROUND = {
+  title: 'Appothèque — tour 4 : l’empreinte et la pile',
+  lead: 'Deux variantes de la 16, puis quatre versions en pile inspirées du pictogramme actuel de la barre de menus (square.stack.3d.up), toutes dans l’ADN de la 16 : graphite, grille de repère discrète, une seule touche verte. Mode macOS, Finder à 64, 32 et 16 pt, barre de menus à 18 pt.',
+  filePrefix: 'appotheque-icon',
+  downloadLabel: 'Télécharger PNG 1024',
+  platform: 'macos',
+};
+
+const C = 512, K = 219, R2 = 311, GLW = 96;
+const G1 = '#5BE59A', G2 = '#22B868', CELL_ON = '#58616C', CELL_OFF = 'rgba(255,255,255,.07)';
+function rrect(x, X, Y, W, H, r) { x.beginPath(); x.roundRect(X, Y, W, H, r); }
+function lineGlyph(x) { x.strokeStyle = '#000'; x.fillStyle = '#000'; x.lineWidth = GLW; x.lineCap = 'round'; x.lineJoin = 'round'; }
+function keylines(x, color, lw = 4) {
+  x.save(); x.strokeStyle = color; x.lineWidth = lw;
+  const L = (a, b, c, d) => { x.beginPath(); x.moveTo(a, b); x.lineTo(c, d); x.stroke(); };
+  [C - K, C, C + K].forEach(v => { L(v, 0, v, S); L(0, v, S, v); });
+  L(0, 0, S, S); L(S, 0, 0, S);
+  [K, R2, C].forEach(r => { x.beginPath(); x.arc(C, C, r, 0, TAU); x.stroke(); });
+  x.restore();
+}
+const graphite = ctx => { fill(ctx, grad(ctx, 0, 0, S, S, [[0, '#2A3038'], [1, '#111418']])); keylines(ctx, 'rgba(255,255,255,.10)', 5); };
+const ON = [[1, 0, 1], [0, 1, 1], [1, 1, 0]];
+// 3×3 fingerprint centred at (cx, cy) in flat space.
+function cells(x, cx, cy, cell, gap, r) {
+  const O = -(3 * cell + 2 * gap) / 2;
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+    const X = cx + O + j * (cell + gap), Y = cy + O + i * (cell + gap);
+    x.fillStyle = i === 1 && j === 1 ? grad(x, 0, Y, 0, Y + cell, [[0, G1], [1, G2]]) : ON[i][j] ? CELL_ON : CELL_OFF;
+    rrect(x, X, Y, cell, cell, r); x.fill();
+  }
+}
+// Isometric frame: flat square of side A·√2 centred at origin maps to a rhombus of half extents A × B at (cx, cy).
+function iso(x, cx, cy, A, B, draw) { x.save(); x.translate(cx, cy); x.scale(1, B / A); x.rotate(Math.PI / 4); draw(A * Math.SQRT2); x.restore(); }
+function rhombus(x, cx, cy, A, B, r) { iso(x, cx, cy, A, B, L => rrect(x, -L / 2, -L / 2, L, L, r)); }
+function chevron(x, cx, cy, A, B) { x.beginPath(); x.moveTo(cx - A, cy); x.lineTo(cx, cy + B); x.lineTo(cx + A, cy); }
+function slab(x, cx, cy, A, B, T, top, side) {
+  x.save(); x.fillStyle = side; iso(x, cx, cy + T, A, B, L => { rrect(x, -L / 2, -L / 2, L, L, 60); x.fill(); }); x.restore();
+  x.fillStyle = side; x.fillRect(cx - A + 18, cy, 2 * A - 36, T);
+  x.fillStyle = top; rhombus(x, cx, cy, A, B, 60); x.fill();
+}
+const sfStack = (x, top, gap, A, B, fillTop) => { // SF-like glyph: rhombus + two chevrons
+  rhombus(x, C, top, A, B, 70); fillTop ? x.fill() : x.stroke();
+  chevron(x, C, top + gap, A, B); x.stroke(); chevron(x, C, top + 2 * gap, A, B); x.stroke();
+};
+
+const CONCEPTS = [
+{ id: '16a', name: 'Empreinte, grille pleine', desc: 'La 16 resserrée : l’empreinte occupe tout le carré de repère, la case verte rayonne. Proportions reprises du film de lancement (octobre 2026) : grille plus grande, halo plus large.',
+  draw(ctx) {
+    graphite(ctx);
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = rgrad(ctx, C, C, 10, 430, [[0, 'rgba(60,220,140,.42)'], [1, 'rgba(60,220,140,0)']]); ctx.fillRect(0, 0, S, S); ctx.restore();
+    shadowLayer(ctx, x => cells(x, C, C, 146, 26, 35), { color: 'rgba(0,0,0,.4)', blur: 22, dy: 9 });
+  },
+  glyph(ctx) { lineGlyph(ctx); ctx.lineWidth = 70; rrect(ctx, 50, 50, 924, 924, 230); ctx.stroke();
+    const CELL = 190, GAP = 40, O = C - (3 * CELL + 2 * GAP) / 2;
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) { ctx.globalAlpha = i === 1 && j === 1 ? 1 : ON[i][j] ? .55 : .2; rrect(ctx, O + j * (CELL + GAP), O + i * (CELL + GAP), CELL, CELL, 44); ctx.fill(); } } },
+{ id: '16b', name: 'Empreinte sur le gabarit', desc: 'La 16 en clair, sur le bleu-gris du gabarit macOS : le clin d’œil « app sans icône » avec l’empreinte qui la rend volontaire. Plus doux, moins technique.',
+  draw(ctx) {
+    fill(ctx, grad(ctx, 0, 0, 0, S, [[0, '#DCE6EB'], [1, '#C9D7DE']])); keylines(ctx, 'rgba(255,255,255,.85)', 5);
+    shadowLayer(ctx, x => { const O = -(3 * 132 + 2 * 24) / 2;
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) { const X = C + O + j * 156, Y = C + O + i * 156;
+        x.fillStyle = i === 1 && j === 1 ? grad(x, 0, Y, 0, Y + 132, [[0, '#3CCB80'], [1, '#1F9A5C']]) : ON[i][j] ? '#7C93A3' : 'rgba(255,255,255,.55)'; rrect(x, X, Y, 132, 132, 32); x.fill(); } },
+      { color: 'rgba(40,70,90,.25)', blur: 20, dy: 8 });
+  },
+  glyph(ctx) { CONCEPTS[0].glyph(ctx); } },
+{ id: '19', name: 'Pile au trait', desc: 'Le pictogramme actuel redessiné en icône : losange et deux chevrons blancs sur graphite, un point vert au centre de la couche du dessus. Continuité parfaite avec la barre de menus ; proche du symbole « calques ».',
+  draw(ctx) {
+    graphite(ctx); const A = 290, B = 165, TOP = 400, GAP = 120;
+    shadowLayer(ctx, x => { x.lineWidth = 58; x.lineJoin = 'round'; x.lineCap = 'round';
+      x.strokeStyle = '#7E8894'; chevron(x, C, TOP + 2 * GAP, A, B); x.stroke(); x.strokeStyle = '#A9B2BC'; chevron(x, C, TOP + GAP, A, B); x.stroke();
+      x.strokeStyle = '#F2F5F8'; rhombus(x, C, TOP, A, B, 60); x.stroke();
+      x.fillStyle = G1; x.beginPath(); x.ellipse(C, TOP, 74, 74 * B / A, 0, 0, TAU); x.fill(); }, { color: 'rgba(0,0,0,.45)', blur: 22, dy: 10 });
+  },
+  glyph(ctx) { lineGlyph(ctx); sfStack(ctx, 300, 230, 440, 250, false); ctx.beginPath(); ctx.ellipse(C, 300, 120, 68, 0, 0, TAU); ctx.fill(); } },
+{ id: '20', name: 'Pile pleine', desc: 'Trois dalles en isométrie, graphite, celle du dessus verte : l’app prête au sommet de la pile. Objet plus « Xcode » ; perd la grille d’empreinte.',
+  draw(ctx) {
+    graphite(ctx); const A = 290, B = 165, T = 46;
+    shadowLayer(ctx, x => { slab(x, C, 640, A, B, T, '#4A525D', '#2C323A'); slab(x, C, 530, A, B, T, '#5A636F', '#363D46'); },
+      { color: 'rgba(0,0,0,.45)', blur: 26, dy: 14 });
+    shadowLayer(ctx, x => { slab(x, C, 400, A, B, T, G2, '#167A47');
+      x.fillStyle = 'rgba(255,255,255,.22)'; rhombus(x, C, 392, A * .82, B * .82, 50); x.fill(); }, { color: 'rgba(0,30,15,.45)', blur: 30, dy: 16 });
+  },
+  glyph(ctx) { lineGlyph(ctx); sfStack(ctx, 300, 230, 440, 250, true); } },
+{ id: '21', name: 'Pile d’empreintes', desc: 'Fusion de la 16 et de la pile : l’empreinte 3 × 3 posée sur la couche du dessus, en isométrie, deux couches dessous. Le plus riche en sens ; détails fins à 16 pt.',
+  draw(ctx) {
+    graphite(ctx); const A = 300, B = 170, T = 40;
+    shadowLayer(ctx, x => { slab(x, C, 650, A, B, T, '#3A414B', '#262B32'); slab(x, C, 545, A, B, T, '#454D58', '#2C323A'); slab(x, C, 420, A, B, T, '#4E5763', '#30363E'); },
+      { color: 'rgba(0,0,0,.45)', blur: 26, dy: 14 });
+    iso(ctx, C, 420, A, B, L => { const cell = L * 0.24, gap = L * 0.06; ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 8; cells(ctx, 0, 0, cell, gap, cell * .24); ctx.restore(); });
+  },
+  glyph(ctx) { lineGlyph(ctx); sfStack(ctx, 300, 230, 440, 250, false);
+    iso(ctx, C, 300, 440, 250, L => { const c = L * 0.22; rrect(ctx, -c / 2, -c / 2, c, c, c * .25); ctx.fill(); }); } },
+{ id: '22', name: 'Pile soulevée', desc: 'La couche du dessus, verte, se détache de la pile avec une lueur : l’app sort, prête à lancer. Plus dynamique ; la lueur disparaît en petit.',
+  draw(ctx) {
+    graphite(ctx); const A = 290, B = 165;
+    shadowLayer(ctx, x => { x.lineWidth = 58; x.lineJoin = 'round'; x.lineCap = 'round';
+      x.strokeStyle = '#6E7884'; chevron(x, C, 690, A, B); x.stroke(); x.strokeStyle = '#97A1AC'; chevron(x, C, 575, A, B); x.stroke(); }, { color: 'rgba(0,0,0,.4)', blur: 18, dy: 8 });
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = rgrad(ctx, C, 470, 20, 300, [[0, 'rgba(60,220,140,.30)'], [1, 'rgba(60,220,140,0)']]); ctx.fillRect(0, 0, S, S); ctx.restore();
+    shadowLayer(ctx, x => { x.fillStyle = grad(x, 0, 210, 0, 560, [[0, G1], [1, G2]]); rhombus(x, C, 380, A, B, 60); x.fill();
+      x.fillStyle = 'rgba(255,255,255,.25)'; rhombus(x, C, 372, A * .8, B * .8, 50); x.fill(); }, { color: 'rgba(0,40,20,.5)', blur: 34, dy: 26 });
+  },
+  glyph(ctx) { lineGlyph(ctx); rhombus(ctx, C, 230, 440, 250, 70); ctx.fill(); chevron(ctx, C, 560, 440, 250); ctx.stroke(); chevron(ctx, C, 760, 440, 250); ctx.stroke(); } },
+];
+// ======================= ROUND CONFIG — end ==================================
+
+document.title = ROUND.title;
+document.getElementById('title').textContent = ROUND.title;
+document.getElementById('lead').textContent = ROUND.lead;
+
+const grid = document.getElementById('grid');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const PLATFORM = ROUND.platform || 'ios';
+const SIZES = PLATFORM === 'macos' ? [64, 32, 16] : [60, 29];
+// Downscale in steps for crisp small previews (a 1024 → 29 jump aliases badly). Returns a canvas at size*scale px.
+function scaledCanvas(src, size, scale = 2) {
+  let cur = src;
+  while (cur.width / 2 >= size * scale) { const h = document.createElement('canvas'); h.width = h.height = cur.width / 2; const x = h.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(cur, 0, 0, h.width, h.height); cur = h; }
+  const out = document.createElement('canvas'); out.width = out.height = size * scale; const x = out.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(cur, 0, 0, out.width, out.height);
+  return out;
+}
+const scaled = (src, size) => scaledCanvas(src, size).toDataURL('image/png');
+// macOS grid: 824×824 squircle inset 100 px in 1024, soft drop shadow (legacy .icns look).
+function macMasked(src) {
+  const c = document.createElement('canvas'); c.width = c.height = S; const x = c.getContext('2d');
+  const shape = () => { x.beginPath(); x.roundRect(100, 100, 824, 824, 185); };
+  x.save(); x.shadowColor = 'rgba(0,0,0,.28)'; x.shadowBlur = 30; x.shadowOffsetY = 12; shape(); x.fillStyle = '#000'; x.fill(); x.restore();
+  x.save(); shape(); x.clip(); x.drawImage(src, 100, 100, 824, 824); x.restore();
+  return c;
+}
+// Recolour an alpha mask (glyph) with one colour.
+function tinted(src, color) {
+  const c = document.createElement('canvas'); c.width = src.width; c.height = src.height; const x = c.getContext('2d');
+  x.drawImage(src, 0, 0); x.globalCompositeOperation = 'source-in'; x.fillStyle = color; x.fillRect(0, 0, c.width, c.height);
+  return c;
+}
+window.ICONS = {};  // id -> 1024 data URL of the full-bleed art (read it from the browser tool if needed)
+window.MAC = {};    // id -> 1024 data URL of the macOS-masked icon (platform 'macos')
+window.GLYPHS = {}; // id -> 1024 data URL of the menu-bar glyph (black on transparent)
+const RENDERED = []; // { id, name, art, shown, glyph } canvases, used by exportSheet()
+
+CONCEPTS.forEach((c, i) => {
+  const id = c.id || String(i + 1);
+  const card = document.createElement('div'); card.className = 'card'; card.id = 'concept-' + id;
+  const cv = document.createElement('canvas'); cv.width = cv.height = S;
+  const ctx = cv.getContext('2d');
+  let error = null, gl = null;
+  try { ctx.save(); c.draw(ctx); ctx.restore(); } catch (e) { error = e; console.error(`Concept ${id} failed:`, e); }
+  if (!error && c.glyph) {
+    gl = document.createElement('canvas'); gl.width = gl.height = S;
+    try { const g = gl.getContext('2d'); g.save(); c.glyph(g); g.restore(); } catch (e) { error = e; console.error(`Glyph ${id} failed:`, e); }
+  }
+  const shown = PLATFORM === 'macos' && !error ? macMasked(cv) : cv;
+  shown.className = PLATFORM === 'macos' ? 'big mac' : 'big';
+  card.appendChild(shown);
+  const title = `<h2>${esc(id)} · ${esc(c.name)}</h2><p class="desc">${esc(c.desc || '')}</p>`;
+  if (error) { card.insertAdjacentHTML('beforeend', `${title}<p class="error">draw() a échoué : ${esc(error.message)}</p>`); grid.appendChild(card); return; }
+  const url = cv.toDataURL('image/png'); window.ICONS[id] = url;
+  if (PLATFORM === 'macos') window.MAC[id] = shown.toDataURL('image/png');
+  RENDERED.push({ id, name: c.name, art: cv, shown, glyph: gl });
+  const imgs = SIZES.map(sz => `<img src="${scaled(shown, sz)}" width="${sz}" height="${sz}" alt="">`).join('');
+  const box = PLATFORM === 'macos' ? 'finder' : 'home';
+  let html = `<div class="row"><div class="${box}"><div class="row">${imgs}</div></div><div class="${box} dark"><div class="row">${imgs}</div></div></div>`;
+  if (gl) {
+    window.GLYPHS[id] = gl.toDataURL('image/png');
+    const g18 = scaledCanvas(gl, 18);
+    const light = tinted(g18, '#000').toDataURL('image/png'), dark = tinted(g18, '#fff').toDataURL('image/png');
+    html += `<div class="row"><div class="menubar"><img src="${light}" width="18" height="18" alt=""><span>Wi-Fi</span><span>12:41</span></div><div class="menubar dark"><img src="${dark}" width="18" height="18" alt=""><span>Wi-Fi</span><span>12:41</span></div></div>`;
+  }
+  card.insertAdjacentHTML('beforeend', html + title);
+  const btn = document.createElement('button'); btn.textContent = ROUND.downloadLabel;
+  btn.onclick = () => { const a = document.createElement('a'); a.href = PLATFORM === 'macos' ? window.MAC[id] : url; a.download = `${ROUND.filePrefix}-${id}.png`; a.click(); };
+  card.appendChild(btn);
+  grid.appendChild(card);
+});
+
+async function save(name, canvasOrUrl) {
+  const body = typeof canvasOrUrl === 'string' ? canvasOrUrl : canvasOrUrl.toDataURL('image/png');
+  const r = await fetch('/__save/' + name, { method: 'POST', body });
+  return r.json();
+}
+// Contact sheet at @2x pixels: big icon, small sizes on light/dark, menu-bar glyph. For self-review with the Read tool.
+window.exportSheet = async (name = 'sheet') => {
+  const cols = Math.min(3, RENDERED.length), cellW = 620, cellH = RENDERED.some(r => r.glyph) ? 770 : 710;
+  const rows = Math.ceil(RENDERED.length / cols);
+  const sh = document.createElement('canvas'); sh.width = cols * cellW; sh.height = rows * cellH; const x = sh.getContext('2d');
+  x.fillStyle = '#ffffff'; x.fillRect(0, 0, sh.width, sh.height);
+  // iOS: preview the system squircle mask on the sheet too (the PNG itself stays full-bleed).
+  const masked = r => { if (PLATFORM === 'macos') return r.shown; const c = document.createElement('canvas'); c.width = c.height = S; const m = c.getContext('2d'); m.beginPath(); m.roundRect(0, 0, S, S, S * 0.2237); m.clip(); m.drawImage(r.shown, 0, 0); return c; };
+  RENDERED.forEach((r, i) => {
+    const icon = masked(r);
+    const ox = (i % cols) * cellW, oy = Math.floor(i / cols) * cellH;
+    x.fillStyle = '#111'; x.font = '600 26px -apple-system, system-ui'; x.fillText(`${r.id} · ${r.name}`, ox + 24, oy + 40);
+    x.drawImage(icon, ox + 150, oy + 60, 320, 320);
+    [['#f2f2f2', 0], ['#141414', 1]].forEach(([bg, k]) => {
+      const y = oy + 400 + k * 150; x.fillStyle = bg; x.fillRect(ox + 24, y, cellW - 48, 140);
+      let px = ox + 48; SIZES.forEach(sz => { const c = scaledCanvas(icon, sz); x.drawImage(c, px, y + 70 - sz); px += sz * 2 + 32; });
+    });
+    if (r.glyph) {
+      [['#e8e8e8', '#000', 0], ['#1e1e1e', '#fff', 1]].forEach(([bg, fg, k]) => {
+        const y = oy + 702, X = ox + 24 + k * ((cellW - 48) / 2);
+        x.fillStyle = bg; x.fillRect(X, y, (cellW - 48) / 2 - 8, 48);
+        x.drawImage(tinted(scaledCanvas(r.glyph, 18), fg), X + 16, y + 6);
+      });
+    }
+  });
+  return save(name.endsWith('.png') ? name : name + '.png', sh);
+};
+// Save every concept's 1024 art (+ mac-masked and glyph variants) to exports/.
+window.exportAll = async (tag = 'round') => {
+  const out = [];
+  for (const r of RENDERED) {
+    out.push(await save(`${tag}-${r.id}.png`, r.art));
+    if (PLATFORM === 'macos') out.push(await save(`${tag}-${r.id}-mac.png`, r.shown));
+    if (r.glyph) out.push(await save(`${tag}-${r.id}-glyph.png`, r.glyph));
+  }
+  return out.map(o => o.path || o.error);
+};
+</script>
+</body>
+</html>
