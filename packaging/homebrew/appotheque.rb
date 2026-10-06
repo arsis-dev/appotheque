@@ -1,6 +1,6 @@
 cask "appotheque" do
-  version "0.5.0"
-  sha256 "336e14388c4f82826005fb08f1c32b7f6820d4a3ca5c88abbee57abe3aa19e63"
+  version "0.5.1"
+  sha256 "c12dd2e90255a54e5d125586d10e0ae118b14b537d8515e201d8846ce3671292"
 
   url "https://github.com/arsis-dev/appotheque/releases/download/v#{version}/Appotheque-#{version}.zip"
   name "Appothèque"

@@ -253,3 +253,40 @@ struct FingerprintGlyphView: View {
         return changed ? AnyShapeStyle(Color.orange.opacity(0.75)) : AnyShapeStyle(.secondary)
     }
 }
+
+/// The background of a launcher row while its app launches: a tinted fill that follows the launch,
+/// or a band sweeping across while a build runs with no previous duration to go by.
+struct LaunchProgressBackground: View {
+    @EnvironmentObject var model: LauncherModel
+    let project: Project
+    var cornerRadius: CGFloat = 12
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1 / 30)) { context in
+            let progress = model.progress(for: project, at: context.date)
+            GeometryReader { geometry in
+                let width = geometry.size.width
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(.tint.opacity(0.10))
+                    if let progress {
+                        Rectangle().fill(.tint.opacity(0.22))
+                            .frame(width: width * progress)
+                            .animation(.easeOut(duration: 0.35), value: progress)
+                    } else if reduceMotion {
+                        Rectangle().fill(.tint.opacity(0.08))
+                    } else {
+                        // A soft band that crosses the row every 1.6 s.
+                        let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6
+                        Rectangle().fill(.tint.opacity(0.22))
+                            .mask(LinearGradient(colors: [.clear, .black, .clear], startPoint: .leading, endPoint: .trailing))
+                            .frame(width: width * 0.4)
+                            .offset(x: -width * 0.4 + phase * width * 1.4)
+                    }
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .accessibilityHidden(true)
+    }
+}

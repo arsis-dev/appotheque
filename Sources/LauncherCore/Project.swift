@@ -64,12 +64,14 @@ public struct BuildReceipt: Codable, Sendable {
     /// Absent from receipts written before Appothèque could list changed files.
     public let settingsDigest: String?
     public let files: [String: String]?
+    /// How long the build command ran, to estimate the next build's progress.
+    public let buildSeconds: Double?
 
     public init(inputDigest: String, artifactStamp: String, appPath: String, builtAt: Date,
-                settingsDigest: String? = nil, files: [String: String]? = nil) {
+                settingsDigest: String? = nil, files: [String: String]? = nil, buildSeconds: Double? = nil) {
         self.inputDigest = inputDigest; self.artifactStamp = artifactStamp
         self.appPath = appPath; self.builtAt = builtAt
-        self.settingsDigest = settingsDigest; self.files = files
+        self.settingsDigest = settingsDigest; self.files = files; self.buildSeconds = buildSeconds
     }
 }
 
@@ -101,6 +103,23 @@ public enum LaunchStep: Sendable {
         case .booting: return String(localized: "Booting…")
         case .installing: return String(localized: "Installing…")
         case .opening: return String(localized: "Opening…")
+        }
+    }
+
+    /// Where a launch stands, from 0 to 1. `building` is the fraction of the build's expected duration,
+    /// or nil when no previous build tells how long it takes.
+    public static func progress(step: LaunchStep?, building: Double?) -> Double? {
+        switch step {
+        case nil, .checking: return 0.04
+        case .building:
+            guard let building else { return nil }
+            // Linear up to the expected duration, then slower, never reaching the end before the build does.
+            let f = max(0, building)
+            return 0.05 + 0.85 * (f <= 1 ? f * 0.9 : 0.9 + 0.1 * (1 - exp(-(f - 1) * 2)))
+        case .preparing: return 0.9
+        case .booting: return 0.92
+        case .installing: return 0.95
+        case .opening: return 0.98
         }
     }
 }

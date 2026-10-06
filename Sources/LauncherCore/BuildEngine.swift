@@ -109,7 +109,9 @@ public actor BuildEngine {
 
     private func performBuild(_ project: Project, before: InputSnapshot,
                               phase: @escaping @Sendable (BuildPhase) async -> Void) async throws -> PreparedApp {
+        let started = Date()
         try await ProcessRunner.build(project, logURL: logURL(for: project.id))
+        let buildSeconds = Date().timeIntervalSince(started)
         try Fingerprint.validateApp(at: project.appURL)
         let after = try await Task.detached { try Fingerprint.snapshot(for: project) }.value
         guard before.digest == after.digest else {
@@ -124,7 +126,7 @@ public actor BuildEngine {
             _ = try await Task.detached { try ProcessRunner.capture("/usr/bin/ditto", [project.appURL.path, app.path]) }.value
             let stamp = try Fingerprint.artifact(at: app)
             let receipt = BuildReceipt(inputDigest: after.digest, artifactStamp: stamp, appPath: app.path, builtAt: Date(),
-                                       settingsDigest: after.settingsDigest, files: after.files)
+                                       settingsDigest: after.settingsDigest, files: after.files, buildSeconds: buildSeconds)
             try JSONEncoder().encode(receipt).write(to: generation.appendingPathComponent("receipt.json"), options: .atomic)
             let target = receiptURL(for: project.id)
             try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)

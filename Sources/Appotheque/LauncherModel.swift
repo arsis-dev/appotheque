@@ -17,8 +17,18 @@ final class LauncherModel: ObservableObject {
     @Published var failures: [UUID: String] = [:]
     @Published var receipts: [UUID: BuildReceipt] = [:]
     @Published var busyID: UUID? {
-        didSet { if busyID != oldValue { busySince = busyID == nil ? nil : Date() } }
+        didSet {
+            guard busyID != oldValue else { return }
+            busySince = busyID == nil ? nil : Date()
+            buildStartedAt = nil
+            if let id = busyID { steps[id] = nil }
+            // The last build's duration, read before the engine sets the receipt aside.
+            expectedBuildSeconds = busyID.flatMap { receipts[$0]?.buildSeconds }
+        }
     }
+    /// When the build command started, and how long the last one took: together they drive the row's progress bar.
+    @Published private(set) var buildStartedAt: Date?
+    private(set) var expectedBuildSeconds: Double?
     /// Start of the current operation, for the elapsed time shown while building.
     @Published private(set) var busySince: Date?
     @Published var configurationError: String?
@@ -189,7 +199,7 @@ final class LauncherModel: ObservableObject {
                 let prepared = try await engine.prepare(project, force: force) { [self] phase in
                     await setPhase(phase, for: project.id)
                 }
-                states[project.id] = String(localized: "Opening…")
+                steps[project.id] = .opening; states[project.id] = String(localized: "Opening…")
                 let activated = try await openLatest(prepared.url)
                 states[project.id] = activated ? String(localized: "Brought to front · no build") :
                     (prepared.rebuilt ? String(localized: "New version launched") : String(localized: "Launched · no build"))
@@ -291,7 +301,19 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    private func setMobilePhase(_ step: LaunchStep, _ message: String, for id: UUID) { steps[id] = step; states[id] = message }
+    private func setMobilePhase(_ step: LaunchStep, _ message: String, for id: UUID) {
+        if step == .building, steps[id] != .building { buildStartedAt = Date() }
+        steps[id] = step; states[id] = message
+    }
+
+    /// Where the running launch of a project stands, from 0 to 1; nil when it is building without an estimate.
+    func progress(for project: Project, at date: Date) -> Double? {
+        guard busyID == project.id else { return nil }
+        let building = buildStartedAt.flatMap { start in
+            expectedBuildSeconds.map { date.timeIntervalSince(start) / max($0, 0.5) }
+        }
+        return LaunchStep.progress(step: steps[project.id], building: building)
+    }
 
     private func showSimulator(_ destination: LaunchDestination) async throws {
         let developer = await Task.detached {
@@ -394,6 +416,7 @@ final class LauncherModel: ObservableObject {
     }
 
     private func setPhase(_ phase: BuildPhase, for id: UUID) {
+        if phase == .building, steps[id] != .building { buildStartedAt = Date() }
         steps[id] = LaunchStep(phase)
         switch phase {
         case .checking: states[id] = String(localized: "Checking files…")

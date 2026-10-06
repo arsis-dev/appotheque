@@ -280,6 +280,22 @@ final class BuildEngineTests: XCTestCase {
         XCTAssertEqual(changed.changes?.fileCount, 0)
     }
 
+    func testReceiptRecordsHowLongTheBuildRan() async throws {
+        let engine = BuildEngine(storage: storage)
+        _ = try await engine.prepare(project)
+        let seconds = await engine.receipt(for: project.id)?.buildSeconds
+        XCTAssertNotNil(seconds)
+        XCTAssertGreaterThan(seconds ?? -1, 0)
+    }
+
+    func testLaunchProgressGrowsAndNeverFinishesBeforeTheBuild() {
+        XCTAssertNil(LaunchStep.progress(step: .building, building: nil), "No estimate without a previous build.")
+        let values = [0, 0.5, 1, 2, 10].map { LaunchStep.progress(step: .building, building: $0)! }
+        XCTAssertEqual(values, values.sorted())
+        XCTAssertLessThan(values.last!, LaunchStep.progress(step: .preparing, building: nil)!)
+        XCTAssertLessThan(LaunchStep.progress(step: .checking, building: nil)!, values.first!)
+    }
+
     func testFingerprintGlyphIsStableAndKeepsItsCentre() {
         let digest = String(repeating: "a5", count: 32)
         XCTAssertEqual(FingerprintGlyph.cells(for: digest), FingerprintGlyph.cells(for: digest))

@@ -219,7 +219,13 @@ private struct ProjectDetailView: View {
                 }.padding(.vertical, 4)
                 if model.busyID == project.id {
                     VStack(alignment: .leading, spacing: 6) {
-                        ProgressView().progressViewStyle(.linear)
+                        TimelineView(.periodic(from: .now, by: 0.25)) { context in
+                            if let progress = model.progress(for: project, at: context.date) {
+                                ProgressView(value: progress).progressViewStyle(.linear)
+                            } else {
+                                ProgressView().progressViewStyle(.linear)
+                            }
+                        }
                         LastLogLine(url: model.logURL(for: project.id))
                     }
                 } else if let error = model.error(for: project) {

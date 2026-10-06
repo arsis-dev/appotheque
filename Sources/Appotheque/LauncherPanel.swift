@@ -251,8 +251,12 @@ private struct PanelRow: View {
         }
         .padding(.horizontal, 10).frame(height: 40)
         .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(selected || busy ? AnyShapeStyle(.tint.opacity(0.16)) : AnyShapeStyle(.primary.opacity(hovered ? 0.05 : 0)))
+            if busy {
+                LaunchProgressBackground(project: project)
+            } else {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(selected ? AnyShapeStyle(.tint.opacity(0.16)) : AnyShapeStyle(.primary.opacity(hovered ? 0.05 : 0)))
+            }
         }
         .contentShape(Rectangle())
         // Hover only highlights: selecting on hover made the detail follow the pointer and fought scrolling.
@@ -282,8 +286,17 @@ private struct PanelDetail: View {
                 ProjectIcon(project: project, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(project.name).font(.system(size: 14, weight: .semibold)).lineLimit(1)
-                    Text(meta).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
-                        .lineLimit(1).truncationMode(.middle)
+                    HStack(spacing: 5) {
+                        Text(source).lineLimit(1).truncationMode(.middle)
+                        if let receipt = model.receipts[project.id] {
+                            Text("·")
+                            // The last build's fingerprint, as in the window.
+                            FingerprintGlyphView(digest: receipt.inputDigest, size: 11)
+                            Text(receipt.builtAt.formatted(.dateTime.day().month(.abbreviated).hour().minute()))
+                                .lineLimit(1).fixedSize()
+                        }
+                    }
+                    .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
             }
@@ -319,14 +332,9 @@ private struct PanelDetail: View {
         .padding(14)
     }
 
-    private var meta: String {
-        var parts: [String] = []
-        if let git = model.inspections[project.id]?.git { parts.append(git.branch + (git.isDirty ? " · " + String(localized: "modified") : "")) }
-        else { parts.append(project.directoryURL.lastPathComponent) }
-        if let receipt = model.receipts[project.id] {
-            parts.append(receipt.builtAt.formatted(.dateTime.day().month(.abbreviated).hour().minute()))
-        }
-        return parts.joined(separator: " · ")
+    private var source: String {
+        guard let git = model.inspections[project.id]?.git else { return project.directoryURL.lastPathComponent }
+        return git.branch + (git.isDirty ? " · " + String(localized: "modified") : "")
     }
 
     @ViewBuilder private var state: some View {
@@ -342,7 +350,13 @@ private struct PanelDetail: View {
                         }
                     }
                 }.font(.system(size: 12))
-                ProgressView().progressViewStyle(.linear).controlSize(.small)
+                TimelineView(.periodic(from: .now, by: 0.25)) { context in
+                    if let progress = model.progress(for: project, at: context.date) {
+                        ProgressView(value: progress).progressViewStyle(.linear).controlSize(.small)
+                    } else {
+                        ProgressView().progressViewStyle(.linear).controlSize(.small)
+                    }
+                }
                 LastLogLine(url: model.logURL(for: project.id))
             }
         } else if let error = model.error(for: project) {
@@ -356,7 +370,16 @@ private struct PanelDetail: View {
                 }.buttonStyle(.plain).font(.system(size: 11, weight: .semibold)).foregroundStyle(.tint)
             }
         } else {
-            Text(model.subtitle(for: project)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model.subtitle(for: project)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
+                if let changes = model.inspections[project.id]?.changes, changes.fileCount > 0 {
+                    let paths = changes.modified + changes.added + changes.removed
+                    Text(paths.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))
+                        .font(.system(size: 11, design: .monospaced)).foregroundStyle(.orange)
+                        .lineLimit(1).truncationMode(.tail)
+                        .help(paths.joined(separator: "\n"))
+                }
+            }
         }
     }
 }
