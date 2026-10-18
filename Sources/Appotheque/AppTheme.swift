@@ -167,6 +167,7 @@ struct ProjectIcon: View {
     var body: some View {
         Image(nsImage: model.icon(for: project)).resizable().scaledToFit()
             .frame(width: size, height: size).foregroundStyle(.secondary).accessibilityHidden(true)
+            .help(model.hasStandInIcon(project) ? String(localized: "No icon in the project") : "")
     }
 }
 

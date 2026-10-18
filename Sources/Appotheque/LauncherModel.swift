@@ -153,28 +153,54 @@ final class LauncherModel: ObservableObject {
     }
 
     /// Not published: filled while rendering. Reading the sources can take a moment, so only an explicit refresh empties it.
-    private var iconCache: [UUID: (project: Project, path: String, image: NSImage)] = [:]
+    private var iconCache: [UUID: (project: Project, path: String, image: NSImage, standIn: Bool)] = [:]
 
     func forgetIcons() { iconCache = [:] }
 
-    /// The built bundle's icon when it has its own, otherwise the icon declared in the sources, otherwise Electron's or a symbol.
+    /// The built bundle's icon when it has its own, otherwise the icon declared in the sources, otherwise a stand-in
+    /// drawn from the name (the generic macOS or Electron icon tells nothing apart).
     func icon(for project: Project) -> NSImage {
         let path = receipts[project.id]?.appPath ?? project.appURL.path
         if let cached = iconCache[project.id], cached.project == project, cached.path == path { return cached.image }
         let bundle = URL(fileURLWithPath: path)
         let built = FileManager.default.fileExists(atPath: path)
         let image: NSImage
+        var standIn = false
         if built, project.ios == nil, SourceIcon.bundleHasIcon(bundle) {
             image = NSWorkspace.shared.icon(forFile: path)
         } else if let source = SourceIcon.locate(for: project), let file = NSImage(contentsOf: source.url) {
             image = source.needsMask ? Self.homeScreenShape(file) : file
-        } else if built, project.ios == nil {
-            image = NSWorkspace.shared.icon(forFile: path)
         } else {
-            image = NSImage(systemSymbolName: project.ios == nil ? "app" : (project.ios?.deviceFamilies == [2] ? "ipad" : "iphone"), accessibilityDescription: nil)!
+            image = Self.monogram(for: project.name)
+            standIn = true
         }
-        iconCache[project.id] = (project, path, image)
+        iconCache[project.id] = (project, path, image, standIn)
         return image
+    }
+
+    /// True when the project has no icon of its own and shows its initials.
+    func hasStandInIcon(_ project: Project) -> Bool {
+        _ = icon(for: project)
+        return iconCache[project.id]?.standIn ?? false
+    }
+
+    /// Initials on a flat colour, in the outline of a macOS icon: no gradient, no shadow, so it reads as provisional.
+    private static func monogram(for name: String) -> NSImage {
+        let side: CGFloat = 256, inset = side * 0.1, inner = side - 2 * inset
+        let letters = Monogram.letters(for: name)
+        let fill = AppTint.nsColor(Monogram.color(for: name))
+        return NSImage(size: NSSize(width: side, height: side), flipped: false) { _ in
+            let frame = NSRect(x: inset, y: inset, width: inner, height: inner)
+            fill.withAlphaComponent(0.88).setFill()
+            NSBezierPath(roundedRect: frame, xRadius: inner * 0.225, yRadius: inner * 0.225).fill()
+            let size = inner * (letters.count > 1 ? 0.4 : 0.5)
+            let base = NSFont.systemFont(ofSize: size, weight: .semibold)
+            let font = base.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: size) } ?? base
+            let text = NSAttributedString(string: letters, attributes: [.font: font, .foregroundColor: NSColor.white.withAlphaComponent(0.95)])
+            let bounds = text.size()
+            text.draw(at: NSPoint(x: frame.midX - bounds.width / 2, y: frame.midY - bounds.height / 2 + size * 0.04))
+            return true
+        }
     }
 
     /// A square iOS icon, rounded and inset like a macOS icon so that it lines up with its neighbours.

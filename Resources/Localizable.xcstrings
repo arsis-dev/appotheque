@@ -2306,6 +2306,22 @@
         }
       }
     },
+    "No icon in the project": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pas d'icône dans le projet"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No icon in the project"
+          }
+        }
+      }
+    },
     "No Log": {
       "localizations": {
         "fr": {
