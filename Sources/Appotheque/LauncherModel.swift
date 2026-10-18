@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import Foundation
 import LauncherCore
 import ServiceManagement
@@ -170,6 +171,9 @@ final class LauncherModel: ObservableObject {
             image = NSWorkspace.shared.icon(forFile: path)
         } else if let source = SourceIcon.locate(for: project), let file = NSImage(contentsOf: source.url) {
             image = source.needsMask ? Self.homeScreenShape(file) : file
+        } else if built, project.ios == nil, case let bundleIcon = NSWorkspace.shared.icon(forFile: path), !Self.isGenericAppIcon(bundleIcon) {
+            // An Electron app may ship its own icon under Electron's default name (`electron.icns`).
+            image = bundleIcon
         } else {
             image = Self.monogram(for: project.name)
             standIn = true
@@ -182,6 +186,25 @@ final class LauncherModel: ObservableObject {
     func hasStandInIcon(_ project: Project) -> Bool {
         _ = icon(for: project)
         return iconCache[project.id]?.standIn ?? false
+    }
+
+    /// macOS's blank application icon, shown for a bundle that declares no icon or an icon it does not contain.
+    private static let genericAppIcon = pixels(NSWorkspace.shared.icon(for: .applicationBundle))
+
+    private static func isGenericAppIcon(_ image: NSImage) -> Bool {
+        pixels(image) == genericAppIcon
+    }
+
+    /// A 32 × 32 rendering, enough to tell two icons apart.
+    private static func pixels(_ image: NSImage) -> Data? {
+        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 32, bitsPerSample: 8, samplesPerPixel: 4,
+                                            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        image.draw(in: NSRect(x: 0, y: 0, width: 32, height: 32))
+        NSGraphicsContext.restoreGraphicsState()
+        return bitmap.bitmapData.map { Data(bytes: $0, count: bitmap.bytesPerRow * 32) }
     }
 
     /// Initials on a flat colour, in the outline of a macOS icon: no gradient, no shadow, so it reads as provisional.
